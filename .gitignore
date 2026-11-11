@@ -1,0 +1,16 @@
+# datasets, videos and training outputs are large: keep them out of git
+data/raw/
+data/merged/
+data/videos/
+runs/
+*.pt
+*.onnx
+*.tflite
+*_ncnn_model/
+*.mlpackage/
+*_saved_model/
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/

@@ -1,0 +1,8 @@
+# Install PyTorch with CUDA FIRST, using the command from https://pytorch.org/get-started/locally/
+# (a plain `pip install torch` on Windows gives the CPU-only build).
+ultralytics>=8.4.0      # YOLO26 support
+fiftyone>=1.0           # downloads COCO / Open Images subsets
+roboflow>=1.1           # downloads Roboflow Universe datasets
+pyyaml>=6.0
+pandas>=2.0
+paho-mqtt>=2.0          # optional: send detection records to the IoT/dashboard side

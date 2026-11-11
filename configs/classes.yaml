@@ -1,0 +1,8 @@
+# Final classes of the StrayWatch model. Order matters: it defines the class ids.
+names: [dog, person]
+
+# How source class names are mapped to ours (case-insensitive, matched in order).
+# A source class that matches nothing is dropped.
+map:
+  dog: [dog, dogs, "dog-with-leash", "dog-without-leash", stray, "stray dog", "stray-dog", puppy]
+  person: [person, people, human, man, woman, pedestrian]

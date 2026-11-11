@@ -1,0 +1,44 @@
+# Every dataset that goes into training. Record the license of EACH source here;
+# this file feeds the "Licenses and sources" table of the dataset documentation.
+
+# Public datasets downloaded with FiftyOne (scripts/01_download_public.py)
+fiftyone:
+  - name: openimages
+    zoo_name: open-images-v7
+    split: train
+    classes: [Dog, Person]          # Open Images class names
+    max_samples: 3000
+    max_non_dog_fraction: 0.15      # keep a few person-only images as negatives
+    license: "Annotations CC BY 4.0; images listed by Google as CC BY 2.0"
+    url: https://storage.googleapis.com/openimages/web/index.html
+  - name: coco
+    zoo_name: coco-2017
+    split: train
+    classes: [dog]                  # COCO class names; person boxes in these images are kept too
+    max_samples: 2500
+    max_non_dog_fraction: 0.0
+    license: "Annotations CC BY 4.0; images are Flickr photos under their own licenses"
+    url: https://cocodataset.org
+
+# Roboflow Universe datasets (scripts/02_download_roboflow.py).
+# Open each page, check the license and the latest version number, then fill them in.
+# workspace / project come from the URL: universe.roboflow.com/<workspace>/<project>
+roboflow:
+  - name: rf_stray_dogs_ds
+    workspace: ds-workspace
+    project: stray-dogs-4h56u
+    version: 1                      # CHECK on the page
+    license: "CC BY 4.0"
+    url: https://universe.roboflow.com/ds-workspace/stray-dogs-4h56u
+  - name: rf_stray_dogs_bothina
+    workspace: bothina
+    project: stray-dogs-ikjii
+    version: 1
+    license: "Public Domain"
+    url: https://universe.roboflow.com/bothina/stray-dogs-ikjii
+
+# Our own footage, labeled in Roboflow and exported in "YOLOv8" format into data/raw/own/
+# (see README, step 3). Used for fine-tuning and as the real-world test set.
+own:
+  name: own
+  license: "Ours. People in frame are covered by the Data Privacy Act (RA 10173); blur faces before sharing."
