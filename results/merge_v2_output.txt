@@ -1,0 +1,10 @@
+﻿Stray Dog Detection.v3i.yolo26: 9483 images kept
+stray dogs.v3i.yolo26: 3469 images kept
+
+Split summary:
+  test_public  images=1298  empty_images=189  dog_boxes=1143  person_boxes=4256
+  train        images=9731  empty_images=1285  dog_boxes=9033  person_boxes=31174
+  val          images=1923  empty_images=249  dog_boxes=1796  person_boxes=5695
+
+Test set in data.yaml: public test split
+Wrote C:\Users\patri\Desktop\straywatch-is\data\merged\data.yaml, results/dataset_stats.csv, results/cleaning_log.csv

@@ -1,4 +1,4 @@
-"""Shared paths and helpers for the StrayWatch ML scripts."""
+"""Shared paths and helpers for the BantayAso ML scripts."""
 from pathlib import Path
 
 import yaml

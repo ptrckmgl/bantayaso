@@ -1,0 +1,16 @@
+split,source,images,empty_images,dog_boxes,person_boxes
+test_public,Stray Dog Detection.v3i.yolo26,939,153,587,3543
+test_public,coco,249,0,306,402
+test_public,negatives_cat,149,149,0,0
+test_public,openimages,299,0,454,721
+test_public,stray dogs.v3i.yolo26,249,0,371,134
+train,Stray Dog Detection.v3i.yolo26,7165,1243,4787,27992
+train,coco,1872,0,2409,2787
+train,negatives_cat,1125,1125,0,0
+train,openimages,2247,0,3371,5756
+train,stray dogs.v3i.yolo26,1872,1,3803,1504
+val,Stray Dog Detection.v3i.yolo26,1294,302,618,4740
+val,coco,374,0,439,577
+val,negatives_cat,225,225,0,0
+val,openimages,450,0,706,1138
+val,stray dogs.v3i.yolo26,373,0,689,404

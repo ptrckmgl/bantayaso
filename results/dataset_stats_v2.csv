@@ -1,0 +1,7 @@
+split,source,images,empty_images,dog_boxes,person_boxes
+test_public,Stray Dog Detection.v3i.yolo26,939,170,745,3690
+test_public,stray dogs.v3i.yolo26,248,0,347,123
+train,Stray Dog Detection.v3i.yolo26,7113,1290,4480,27482
+train,stray dogs.v3i.yolo26,1973,1,3975,755
+val,Stray Dog Detection.v3i.yolo26,1431,262,831,5276
+val,stray dogs.v3i.yolo26,268,0,539,137

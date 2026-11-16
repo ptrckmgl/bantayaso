@@ -1,0 +1,16 @@
+source,action,count
+Stray Dog Detection.v3i.yolo26,blurry_image_flagged_kept(laplacian_var<60),12
+Stray Dog Detection.v3i.yolo26,duplicate_image_dropped,1
+Stray Dog Detection.v3i.yolo26,images_sharing_a_group,6215
+Stray Dog Detection.v3i.yolo26,largest_group_images,622
+Stray Dog Detection.v3i.yolo26,near_duplicate_pairs_within_source,55864
+Stray Dog Detection.v3i.yolo26,split_groups,4060
+Stray Dog Detection.v3i.yolo26,split_groups_roboflow_copies_only,9235
+stray dogs.v3i.yolo26,blurry_image_flagged_kept(laplacian_var<60),90
+stray dogs.v3i.yolo26,dropped_class:unused,2
+stray dogs.v3i.yolo26,images_sharing_a_group,2122
+stray dogs.v3i.yolo26,largest_group_images,124
+stray dogs.v3i.yolo26,near_duplicate_cross_source_dropped,980
+stray dogs.v3i.yolo26,near_duplicate_pairs_within_source,18278
+stray dogs.v3i.yolo26,split_groups,721
+stray dogs.v3i.yolo26,split_groups_roboflow_copies_only,1890

@@ -31,7 +31,7 @@ def export_source(src, max_samples=None, seed=42):
         max_samples=n,
         shuffle=True,
         seed=seed,
-        dataset_name=f"straywatch-{name}-{n}",
+        dataset_name=f"bantayaso-{name}-{n}",
     )
 
     # Normalise label names (Open Images uses "Dog"/"Person", COCO uses "dog"/"person")

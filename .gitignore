@@ -1,9 +1,27 @@
 # datasets, videos and training outputs are large: keep them out of git
-data/raw/
-data/merged/
-data/videos/
+# everything under data/ is ignored except the .gitkeep placeholder
+data/*
+!data/.gitkeep
 runs/
+
+# images, videos and dataset caches anywhere in the repo
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.webp
+*.gif
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.cache
+
+# model weights and exports
 *.pt
+*.pth
+*.weights
+*.engine
 *.onnx
 *.tflite
 *_ncnn_model/
@@ -14,3 +32,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# user test photos and comparison outputs
+test_photos/
+results/compare/

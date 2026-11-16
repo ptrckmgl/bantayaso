@@ -1,4 +1,4 @@
-# Final classes of the StrayWatch model. Order matters: it defines the class ids.
+# Final classes of the BantayAso model. Order matters: it defines the class ids.
 names: [dog, person]
 
 # How source class names are mapped to ours (case-insensitive, matched in order).

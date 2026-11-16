@@ -3,11 +3,15 @@
 What it does (each step is logged for the "Data preparation" section of the paper):
   1. Maps every source's class names to ours (dog, person) using configs/classes.yaml;
      other classes are dropped.
-  2. Cleaning: drops unreadable images and exact duplicates (same file hash), flags blurry
-     images (optionally drops them), converts polygon labels to boxes, clips boxes to the
-     image, drops malformed or tiny boxes.
+  2. Cleaning: drops unreadable images and exact duplicates (same file hash), drops
+     near-duplicates of an image already kept from another source (64-bit dHash, Hamming
+     distance <= 6), flags blurry images (kept by default; optionally dropped), converts
+     polygon labels to boxes, clips boxes to the image, drops malformed or tiny boxes.
   3. Split:
-       - public data -> train / val / test_public (75 / 15 / 10 by image)
+       - public data -> train / val / test_public (75 / 15 / 10 of the images). Images are
+         split in groups: Roboflow copies of one original and near-duplicate images
+         (e.g. consecutive video frames, dHash distance <= 6) share a group, and a group
+         never straddles two splits
        - our own footage (data/raw/own) -> grouped by clip so frames of one clip never
          land in two splits:
            --own-mode test  (default) all own clips are the real-world test set
@@ -22,17 +26,52 @@ import argparse
 import csv
 import hashlib
 import random
+import re
 import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import cv2
+import numpy as np
 import yaml
 
 from common import IMAGE_EXTS, MERGED, RAW, RESULTS, class_mapper, class_names, load_yaml
 
 OWN = "own"
 MIN_BOX = 0.002  # boxes narrower/shorter than 0.2% of the image are treated as label noise
+NEAR_DUP = 6     # max Hamming distance (of 64 bits) between dHashes to call two images near-duplicates
+BLUR_FLAG = 60   # Laplacian variance below this is logged as blurry
+
+
+def dhash(gray):
+    """64-bit difference hash: is each pixel brighter than its right neighbour on a 9x8 thumbnail."""
+    small = cv2.resize(gray, (9, 8), interpolation=cv2.INTER_AREA)
+    bits = (small[:, 1:] > small[:, :-1]).flatten()
+    return int(np.packbits(bits).view(">u8")[0])
+
+
+def near_matches(a, b, block=512):
+    """For every hash in a, the indices of hashes in b within NEAR_DUP bits (numpy XOR + popcount)."""
+    a, b = np.asarray(a, np.uint64), np.asarray(b, np.uint64)
+    out = []
+    for s in range(0, len(a), block):
+        d = np.bitwise_count(a[s:s + block, None] ^ b[None, :])
+        out.extend(np.flatnonzero(row <= NEAR_DUP) for row in d)
+    return out
+
+
+class UnionFind:
+    def __init__(self, n):
+        self.p = list(range(n))
+
+    def find(self, x):
+        while self.p[x] != x:
+            self.p[x] = self.p[self.p[x]]
+            x = self.p[x]
+        return x
+
+    def union(self, a, b):
+        self.p[self.find(a)] = self.find(b)
 
 
 def source_names(src_dir):
@@ -99,9 +138,11 @@ def clean_labels(lbl_path, src_names, mapper, log):
     return out
 
 
-def collect(src_dir, mapper, log, seen_hashes, blur_thr):
+def collect(src_dir, mapper, log, seen_hashes, blur_thr, other_dhashes):
+    """Return [(img, lines, dhash)]. other_dhashes: dHashes kept from earlier sources."""
     names = source_names(src_dir)
     items = []
+    other = np.asarray(other_dhashes, np.uint64)
     imgs = [p for p in src_dir.rglob("*") if p.suffix.lower() in IMAGE_EXTS and "images" in p.parts]
     # labelled copies first, so when two files are identical the one with labels is kept
     imgs.sort(key=lambda p: (not label_path_for(p).exists(), str(p)))
@@ -115,15 +156,138 @@ def collect(src_dir, mapper, log, seen_hashes, blur_thr):
         if im is None:
             log["unreadable_image_dropped"] += 1
             continue
+        dh = dhash(im)
+        if len(other) and np.bitwise_count(other ^ np.uint64(dh)).min() <= NEAR_DUP:
+            log["near_duplicate_cross_source_dropped"] += 1
+            continue
         blur = cv2.Laplacian(im, cv2.CV_64F).var()
         if blur < (blur_thr or 0):
-            log["blurry_image_dropped"] += 1
+            log[f"blurry_image_dropped(laplacian_var<{blur_thr:g})"] += 1
             continue
-        if blur < 60:
-            log["blurry_image_flagged(kept)"] += 1
+        if blur < BLUR_FLAG:
+            log[f"blurry_image_flagged_kept(laplacian_var<{BLUR_FLAG})"] += 1
         seen_hashes.add(digest)
-        items.append((img, clean_labels(label_path_for(img), names, mapper, log)))
+        items.append((img, clean_labels(label_path_for(img), names, mapper, log), dh))
     return items
+
+
+SCENE_PATTERNS = [
+    # CCTV exports name frames after the camera or video they came from, e.g.
+    #   0bb4d2ed-2e0a-4056-9b93-7eca41100ec8 1670000624 _jpeg  (video UUID + timestamp)
+    #   200769_1683016759_1_0_jpeg                            (camera id + timestamp)
+    #   1135_2023-03-24-11_47_18_jpeg                         (camera id + date)
+    #   08-02-2023_10-15-00_jpg                               (recording day)
+    re.compile(r"^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\d{6,}"),
+    re.compile(r"^(\d+)_1\d{9}_"),
+    re.compile(r"^(\d+)_\d{4}-\d\d-\d\d"),
+    re.compile(r"^(\d\d-\d\d-\d{4})_"),
+]
+
+
+def scene_key(stem):
+    """Camera / video id from a frame's file name, or None if the name has none."""
+    base = stem.split(".rf.")[0]
+    for pat in SCENE_PATTERNS:
+        m = pat.match(base)
+        if m:
+            return m.group(1)
+    return None
+
+
+def cap_group(group, n):
+    """Keep at most n images of a group, evenly spaced in file-name (= time) order."""
+    if not n or len(group) <= n:
+        return group
+    group = sorted(group, key=lambda it: it[0].name)
+    step = len(group) / n
+    return [group[int(i * step)] for i in range(n)]
+
+
+def box_counts(lines):
+    """(dog boxes, person boxes) of one image's cleaned label lines."""
+    c = Counter(ln.split()[0] for ln in lines)
+    return c["0"], c["1"]
+
+
+def thin_repeated_frames(items, max_bits, log):
+    """Within each camera / video (see scene_key), walk the frames in time (file-name) order and drop
+    a frame only if an already-kept frame of the same camera looks nearly the same (dHash distance
+    <= max_bits) AND has the same number of dog and person boxes. A frame showing anything new
+    (different scene, lighting, or dog / person count) is kept."""
+    by_scene = defaultdict(list)
+    out = []
+    for it in items:
+        s = scene_key(it[0].stem)
+        (by_scene[s] if s is not None else out).append(it)
+    for s, frames in by_scene.items():
+        frames.sort(key=lambda it: it[0].name)
+        kept = []  # (dhash, counts)
+        for it in frames:
+            dh, cnt = np.uint64(it[2]), box_counts(it[1])
+            if any(c == cnt and int(np.bitwise_count(dh ^ k)) <= max_bits for k, c in kept):
+                log[f"repeated_frame_dropped(same_camera,dhash<={max_bits},same_box_counts)"] += 1
+                continue
+            kept.append((dh, cnt))
+            out.append(it)
+    return out
+
+
+def group_items(items, log, by_scene=False):
+    """Group Roboflow copies of one original ('<original>.rf.<hash>') and near-duplicate images.
+    by_scene: also put all frames of one camera / video (see scene_key) in the same group."""
+    uf = UnionFind(len(items))
+    first = {}
+    for i, (img, _, _) in enumerate(items):
+        key = img.stem.split(".rf.")[0]
+        if key in first:
+            uf.union(i, first[key])
+        else:
+            first[key] = i
+    if by_scene:
+        first_scene = {}
+        for i, (img, _, _) in enumerate(items):
+            s = scene_key(img.stem)
+            if s is None:
+                continue
+            log["images_with_camera_or_video_id"] += 1
+            if s in first_scene:
+                uf.union(i, first_scene[s])
+            else:
+                first_scene[s] = i
+        log["camera_or_video_ids"] = len(first_scene)
+    rf_groups = len({uf.find(i) for i in range(len(items))})
+    pairs = 0
+    for i, js in enumerate(near_matches([d for *_, d in items], [d for *_, d in items])):
+        for j in js:
+            if j > i:
+                pairs += 1
+                uf.union(i, int(j))
+    groups = defaultdict(list)
+    for i, it in enumerate(items):
+        groups[uf.find(i)].append(it)
+    groups = list(groups.values())
+    log["split_groups_roboflow_copies_only"] = rf_groups
+    log["near_duplicate_pairs_within_source"] = pairs
+    log["split_groups"] = len(groups)
+    log["images_sharing_a_group"] = sum(len(g) for g in groups if len(g) > 1)
+    log["largest_group_images"] = max((len(g) for g in groups), default=0)
+    return groups
+
+
+def split_groups_by_images(groups, fracs, rng):
+    """Shuffle whole groups, then cut where the running image count reaches each fraction."""
+    groups = list(groups)
+    rng.shuffle(groups)
+    total = sum(len(g) for g in groups)
+    targets = np.cumsum(fracs)[:-1] * total
+    parts = [[] for _ in fracs]
+    k, acc = 0, 0
+    for g in groups:
+        while k < len(targets) and acc >= targets[k]:
+            k += 1
+        parts[k].append(g)
+        acc += len(g)
+    return parts
 
 
 def write_item(split, source, img, lines):
@@ -153,6 +317,13 @@ def main():
     ap.add_argument("--drop-blurry", type=float, default=0,
                     help="drop images whose Laplacian variance is below this (0 = only flag)")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--split-by-scene", action="store_true",
+                    help="keep all frames of one camera / video in the same split (no scene leakage)")
+    ap.add_argument("--thin-repeats", type=int, default=0,
+                    help="drop a frame if a kept frame of the same camera/video is within this many dHash "
+                         "bits AND has the same dog/person box counts (e.g. 10); 0 = off")
+    ap.add_argument("--max-per-group", type=int, default=0,
+                    help="keep at most N images per group (camera, video or near-duplicate set); 0 = all")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
@@ -166,6 +337,7 @@ def main():
         raise SystemExit("data/raw/ is empty: run the download scripts first.")
 
     seen = set()
+    kept_dhashes = []  # from sources already processed, for the cross-source near-duplicate check
     logs = {}
     stats = defaultdict(Counter)  # (split, source) -> counts
 
@@ -180,12 +352,13 @@ def main():
 
     for src in sources:
         log = Counter()
-        items = collect(src, mapper, log, seen, args.drop_blurry)
+        items = collect(src, mapper, log, seen, args.drop_blurry, kept_dhashes)
+        kept_dhashes.extend(d for *_, d in items)
         logs[src.name] = log
         print(f"{src.name}: {len(items)} images kept")
         if src.name == OWN:
             clips = defaultdict(list)
-            for img, lines in items:
+            for img, lines, _ in items:
                 clips[img.stem.split("__")[0]].append((img, lines))
             if args.own_mode == "test":
                 parts = {"test": list(clips)}
@@ -197,10 +370,24 @@ def main():
                     for img, lines in clips[cid]:
                         record(split, src.name, img, lines)
         else:
-            tr, va, te = split_list(items, [0.75, 0.15, 0.10], rng)
-            for split, chunk in (("train", tr), ("val", va), ("test_public", te)):
-                for img, lines in chunk:
-                    record(split, src.name, img, lines)
+            # Roboflow exports name files '<original>_jpg.rf.<hash>.jpg'. Copies of one original
+            # (augmentations or re-exports) share the part before '.rf.'; near-duplicate images
+            # (e.g. neighbouring frames of one video) are joined to the same group. Each group is
+            # split as a unit, so near-identical images can never leak between train / val / test.
+            if args.thin_repeats:
+                items = thin_repeated_frames(items, args.thin_repeats, log)
+            groups = group_items(items, log, by_scene=args.split_by_scene)
+            if args.max_per_group:
+                before = sum(len(g) for g in groups)
+                groups = [cap_group(g, args.max_per_group) for g in groups]
+                log[f"repeated_frames_dropped(max_{args.max_per_group}_per_group)"] = \
+                    before - sum(len(g) for g in groups)
+            groups.sort(key=lambda g: min(str(it[0]) for it in g))  # deterministic order before shuffling
+            tr, va, te = split_groups_by_images(groups, [0.75, 0.15, 0.10], rng)
+            for split, gs in (("train", tr), ("val", va), ("test_public", te)):
+                for g in gs:
+                    for img, lines, _ in g:
+                        record(split, src.name, img, lines)
 
     has_own_test = (MERGED / "test" / "images").exists()
     base = {"path": str(MERGED.resolve()), "train": "train/images", "val": "val/images",

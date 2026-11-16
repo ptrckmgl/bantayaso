@@ -1,6 +1,6 @@
-# StrayWatch ML
+# BantayAso ML
 
-The machine learning part of **StrayWatch**, an IoT system that helps barangays monitor stray dogs.
+The machine learning part of **BantayAso**, an IoT system that helps barangays monitor stray dogs.
 A YOLO26n object detector finds `dog` and `person` in camera frames, a tracker turns detections
 into sightings, and a simple rule marks dogs with no person nearby as **unaccompanied** (our
 working definition of a likely stray). Each sighting becomes a small JSON record sent to the
@@ -76,10 +76,17 @@ number, and update `configs/sources.yaml`. Add more sets the same way.
 ```powershell
 python scripts/03_merge_datasets.py                    # own footage = test set only (phase 1)
 python scripts/03_merge_datasets.py --own-mode split   # later: also fine-tune on own clips
+
+# the settings used for the final model (v4): leakage-free split + thinning of repeated frames
+python scripts/03_merge_datasets.py --split-by-scene --thin-repeats 10
 ```
 
-Public data is split 75/15/10 by image. Own footage is split **by clip**, so frames of one clip
-never appear in both training and testing. Counts go to `results/dataset_stats.csv` and every
+Public data is split 75/15/10 by group. With `--split-by-scene`, all frames of one camera or
+video (read from the file name) stay in one split, and `--thin-repeats 10` drops a frame only
+when an earlier frame of the same camera looks almost the same and has the same number of dog
+and person boxes. Own footage is split **by clip**, so frames of one clip
+never appear in both training and testing. `scripts/pseudo_label_persons.py` adds missing
+`person` boxes to the lr3 set (run it before merging). Counts go to `results/dataset_stats.csv` and every
 cleaning action to `results/cleaning_log.csv` (both are for the paper).
 
 ## 5. Train
@@ -87,6 +94,8 @@ cleaning action to `results/cleaning_log.csv` (both are for the paper).
 ```powershell
 python scripts/04_train.py --epochs 3 --fraction 0.1   # 5-minute smoke test
 python scripts/04_train.py                             # all three models, 100 epochs, early stopping
+# the final model (v4), about 1.8 h on an RTX 4060 laptop:
+python scripts/04_train.py --models yolo26n.pt --tag v4 --epochs 50 --patience 10 --batch 16 --workers 4
 ```
 
 If Windows crashes while loading data, add `--workers 2` (or `0`). Keep a laptop plugged in.
@@ -106,6 +115,16 @@ them is worth discussing in the paper. Tables land in `results/comparison_<tag>.
 ## 7. Run the edge node
 
 ```powershell
+# quick test on the laptop webcam (shortcut for --source 0 --show --heartbeat 5; press q to stop)
+.\webcam
+.\webcam --conf 0.25          # extra options are passed on
+.\webcam_v4                   # final model (v4); .\webcam_v3 is the earlier model
+.\webcam_v4 --source http://PHONE_IP:8080/video      # phone camera
+
+# compare v3 (left) and v4 (right) on the same frames; saves a video to results\compare\
+.\compare_v3_v4 --source clip.mp4
+.\compare_photos              # same, for the pictures in the test_photos folder
+
 # phone as the camera: install "IP Webcam" (Android), start the server, use the URL it shows
 python scripts/07_detect_stream.py --source http://PHONE_IP:8080/video --show
 
@@ -114,8 +133,8 @@ python scripts/07_detect_stream.py --source data/videos/campus-gate_2026-11-18_a
 ```
 
 Set `--conf` to the `best_conf` value from the evaluation table. Records are appended to
-`results/events.jsonl` and published to `straywatch/<device-id>/events`; a heartbeat goes to
-`straywatch/<device-id>/status`. Before training is done you can try it with the
+`results/events.jsonl` and published to `bantayaso/<device-id>/events`; a heartbeat goes to
+`bantayaso/<device-id>/status`. Before training is done you can try it with the
 COCO-pretrained model: `--weights yolo26n.pt`.
 
 ## 8. Export for devices
@@ -128,5 +147,5 @@ python scripts/06_export.py --formats tflite     # Android
 ## License note
 
 Ultralytics YOLO is licensed under AGPL-3.0. That is fine for this school project as long as
-the code stays open. Selling StrayWatch as a closed-source service would need an Ultralytics
+the code stays open. Selling BantayAso as a closed-source service would need an Ultralytics
 Enterprise License.

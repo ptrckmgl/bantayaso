@@ -1,11 +1,11 @@
-# Handoff: StrayWatch ML (for Claude Code)
+# Handoff: BantayAso ML (for Claude Code)
 
-Paste this into Claude Code from inside the unzipped `straywatch-ml` folder.
+Paste this into Claude Code from inside the unzipped `bantayaso` folder.
 
 ## Who and what
 
 I'm Pat, a BSCS 4-1 student at Cavite State University (Indang, Cavite). My group (7 people) is building
-**StrayWatch**, an IoT system that helps barangays monitor stray dogs. I own the **COSC 105 Intelligent
+**BantayAso**, an IoT system that helps barangays monitor stray dogs. I own the **COSC 105 Intelligent
 Systems** part: a trained supervised ML model plus the dataset/ML documentation. Groupmates own the
 IoT prototype, the HCI dashboard, and the research paper.
 
@@ -49,7 +49,7 @@ See README.md for the full layout and commands. Pipeline:
 `01_download_public.py` -> `02_download_roboflow.py` -> (`extract_frames.py` for own videos, label in
 Roboflow, export YOLOv8 into `data/raw/own/`) -> `03_merge_datasets.py` -> `04_train.py` ->
 `05_evaluate.py` -> `06_export.py` -> `07_detect_stream.py` (edge node: tracking, unaccompanied rule,
-JSON sighting records to `results/events.jsonl` and MQTT `straywatch/<device>/events`).
+JSON sighting records to `results/events.jsonl` and MQTT `bantayaso/<device>/events`).
 `docs/dataset_documentation.md` is the write-up template (TODOs to fill from `results/`).
 
 **Tested:** `03_merge_datasets.py` and `extract_frames.py` on dummy data; all scripts compile.

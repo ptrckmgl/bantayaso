@@ -5,4 +5,5 @@ fiftyone>=1.0           # downloads COCO / Open Images subsets
 roboflow>=1.1           # downloads Roboflow Universe datasets
 pyyaml>=6.0
 pandas>=2.0
+lap>=0.5.12             # needed by the ByteTrack tracker in 07_detect_stream.py
 paho-mqtt>=2.0          # optional: send detection records to the IoT/dashboard side

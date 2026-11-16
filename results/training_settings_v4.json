@@ -1,0 +1,22 @@
+{
+  "models": [
+    "yolo26n.pt"
+  ],
+  "data": "C:\\Users\\patri\\Desktop\\straywatch-is\\data\\merged\\data.yaml",
+  "epochs": 50,
+  "imgsz": 640,
+  "batch": 16,
+  "optimizer": "AdamW",
+  "lr0": 0.00167,
+  "momentum": 0.9,
+  "patience": 10,
+  "device": "0",
+  "workers": 4,
+  "fraction": 1.0,
+  "seed": 42,
+  "deterministic": true,
+  "cache": false,
+  "project": "C:\\Users\\patri\\Desktop\\straywatch-is\\runs\\train",
+  "exist_ok": true,
+  "plots": true
+}
