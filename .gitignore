@@ -36,3 +36,12 @@ venv/
 # user test photos and comparison outputs
 test_photos/
 results/compare/
+frontend/node_modules/
+frontend/dist/
+frontend/dashboard-preview.png
+frontend/*.tsbuildinfo
+backend/straywatch.db
+backend/storage/snapshots/*.svg
+backend/storage/snapshots/*.png
+backend/storage/snapshots/*.jpg
+backend/storage/snapshots/*.webp

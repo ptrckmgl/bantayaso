@@ -1,4 +1,58 @@
-# BantayAso ML
+# StrayWatch: Python API + monitoring dashboard
+
+This repository now includes a local LGU monitoring prototype alongside the existing machine learning scripts. The dashboard is a React interface, while **Python handles device events, snapshots, validation, storage, analytics, and simulation**. The prototype does not run AI detection or require CCTV hardware.
+
+```text
+Python IoT simulator ──multipart image + metadata──> FastAPI ──> SQLite + snapshot files
+                                                     │
+                                                     └──JSON API──> React dashboard
+```
+
+## Run the dashboard locally
+
+Use Python 3.11 or newer and Node.js 20 or newer. From the repository root in PowerShell:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+In a second terminal:
+
+```powershell
+cd frontend
+npm.cmd install
+npm.cmd run dev
+```
+
+Open **http://localhost:5173**. The Python API is at **http://127.0.0.1:8000/docs**. Vite proxies `/api` and `/snapshots` to FastAPI. On other shells, use `npm` instead of `npm.cmd` and activate the virtual environment as appropriate.
+
+Keep both terminals open while using the dashboard. If a review action says the local API is unavailable, restart the Python backend command in the first terminal, then retry. The dashboard cannot save a review change while FastAPI is stopped.
+
+The first API startup creates `backend/straywatch.db` with **one example location and camera** (`CAM-001` at Town Plaza). It starts with **zero detections and zero snapshots**. The dashboard explains the camera → API → storage → review flow and refreshes every 15 seconds. Click **Generate one example event** to create a single Python generated snapshot and detection record, or send one through the device ingestion endpoint with the IoT simulator:
+
+```powershell
+.venv\Scripts\python.exe -m iot.simulator --device CAM-001 --dogs 2
+```
+
+The simulator requires the API to be running. Change `--device` to any registered camera ID, or use **Generate example event for this camera** on a camera card. It uses Pillow to draw a clearly labeled **still frame**, with no camera or model needed. Simulated events do not mark a physical camera as online. A real camera integration can later use OpenCV and the existing `scripts/07_detect_stream.py` pipeline, then POST its validated count and encoded frame to `/api/detections`.
+
+### Dashboard features
+
+- API-backed totals, seven day trends, monitoring zone map, and recent captures after events arrive.
+- Searchable, filterable detection history with review, flag, individual delete, clear all, details, and CSV export.
+- CCTV device list and registration, with connectivity state and a choice of an existing or newly created monitoring zone.
+- Analytics by day and monitoring zone.
+- Responsive layout and persistent light/dark mode.
+
+### API and storage
+
+FastAPI routes include `/api/dashboard/summary`, `/api/devices`, `/api/devices/{device_id}`, `/api/detections`, `/api/detections/{detection_id}`, `/api/locations`, `/api/analytics`, and `/api/demo/simulate`. Camera registration accepts an existing `location_id` or a `new_location` object containing a zone name, barangay, and optional description; both camera and new zone are saved together. `POST /api/locations` can also register a zone by itself. The prototype map places new zones approximately until real coordinates are available. `POST /api/detections` accepts `multipart/form-data` fields `device_id`, `timestamp` (ISO 8601), `dog_count`, `confidence`, `source`, and optional `snapshot` (PNG, JPEG, or WebP; maximum 5 MB). Detection and device records are stored with SQLAlchemy in SQLite, with `DATABASE_URL` available to point at PostgreSQL later. Snapshot file references are stored in the database and served from `/snapshots/`. Review status is updated with `PATCH /api/detections/{detection_id}`. `DELETE /api/detections/{detection_id}` removes one **Reviewed** record, and `DELETE /api/detections` clears all records **only when every record is Reviewed**. Both remove snapshots no longer referenced by a record. Pending and Flagged records return HTTP 409 if deletion is attempted through the API.
+
+The demo does not authenticate operators or devices, and its illustrations are placeholders rather than camera footage. Add authentication, device credentials, migration tooling, and actual image inference before real deployment.
+
+## Existing ML work
 
 The machine learning part of **BantayAso**, an IoT system that helps barangays monitor stray dogs.
 A YOLO26n object detector finds `dog` and `person` in camera frames, a tracker turns detections
