@@ -1,4 +1,4 @@
-# StrayWatch: Python API + monitoring dashboard
+# BantayAso: Python API + monitoring dashboard
 
 This repository now includes a local LGU monitoring prototype alongside the existing machine learning scripts. The dashboard is a React interface, while **Python handles device events, snapshots, validation, storage, analytics, and simulation**. The prototype does not run AI detection or require CCTV hardware.
 
