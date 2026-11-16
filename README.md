@@ -115,15 +115,13 @@ them is worth discussing in the paper. Tables land in `results/comparison_<tag>.
 ## 7. Run the edge node
 
 ```powershell
-# quick test on the laptop webcam (shortcut for --source 0 --show --heartbeat 5; press q to stop)
-.\webcam
-.\webcam --conf 0.25          # extra options are passed on
-.\webcam_v4                   # final model (v4); .\webcam_v3 is the earlier model
-.\webcam_v4 --source http://PHONE_IP:8080/video      # phone camera
+# the .bat helpers live in the bat folder (run from the repo root; press q in the video window to stop)
+bat\webcam_v4                # laptop webcam, final model (v4); bat\webcam_v3 is the earlier model
+bat\webcam_v4 --source http://PHONE_IP:8080/video      # phone camera
 
 # compare v3 (left) and v4 (right) on the same frames; saves a video to results\compare\
-.\compare_v3_v4 --source clip.mp4
-.\compare_photos              # same, for the pictures in the test_photos folder
+bat\compare_v3_v4 --source clip.mp4
+bat\compare_photos            # same, for the pictures in the test_photos folder
 
 # phone as the camera: install "IP Webcam" (Android), start the server, use the URL it shows
 python scripts/07_detect_stream.py --source http://PHONE_IP:8080/video --show
