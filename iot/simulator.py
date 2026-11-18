@@ -41,7 +41,7 @@ def make_snapshot(dog_count: int, camera_id: str) -> bytes:
 
 
 def multipart(fields: dict[str, str], image: bytes):
-    boundary = f"----straywatch{uuid4().hex}"
+    boundary = f"----bantayaso{uuid4().hex}"
     body = bytearray()
     for name, value in fields.items():
         body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode())
@@ -67,7 +67,7 @@ def send_detection(api_url: str, device_id: str, dog_count: int):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Send simulated dog detection to StrayWatch API")
+    parser = argparse.ArgumentParser(description="Send simulated dog detection to BantayAso API")
     parser.add_argument("--api", default="http://127.0.0.1:8000")
     parser.add_argument("--device", default="CAM-001")
     parser.add_argument("--dogs", type=int, choices=range(1, 5), default=2)

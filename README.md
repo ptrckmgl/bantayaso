@@ -1,68 +1,109 @@
 # BantayAso: Python API + monitoring dashboard
 
-This repository now includes a local LGU monitoring prototype alongside the existing machine learning scripts. The dashboard is a React interface, while **Python handles device events, snapshots, validation, storage, analytics, and simulation**. The prototype does not run AI detection or require CCTV hardware.
+This repository includes a React monitoring dashboard and a trained dog/person detector. The detector runs on a camera, webcam, phone stream, or video file and sends snapshots and observations to the Python API. Python stores the events, camera location, review state, and analytics. The dashboard can also generate clearly labeled example events without a camera.
 
 ```text
-Python IoT simulator ──multipart image + metadata──> FastAPI ──> SQLite + snapshot files
-                                                     │
-                                                     └──JSON API──> React dashboard
+Camera/video -> YOLO26n + tracking -> image + metadata -> FastAPI -> SQLite + snapshots
+Simulator ---------------------------------------------> FastAPI -> React dashboard
 ```
 
 ## Run the dashboard locally
 
-Use Python 3.11 or newer and Node.js 20 or newer. From the repository root in PowerShell:
+Use Python 3.11 or newer and Node.js 20 or newer. The commands below are for **Windows Command Prompt**. `cd /d` switches from `C:` to the project on `D:`.
 
-```powershell
+First-time setup:
+
+```cmd
+cd /d D:\bantayaso
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt -r requirements-inference.txt
+cd /d D:\bantayaso\frontend
+npm.cmd install
 ```
 
-In a second terminal:
+On each run, start the backend in **Terminal 1**:
 
-```powershell
-cd frontend
-npm.cmd install
+```cmd
+cd /d D:\bantayaso
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Start the website in **Terminal 2**:
+
+```cmd
+cd /d D:\bantayaso\frontend
 npm.cmd run dev
 ```
 
-Open **http://localhost:5173**. The Python API is at **http://127.0.0.1:8000/docs**. Vite proxies `/api` and `/snapshots` to FastAPI. On other shells, use `npm` instead of `npm.cmd` and activate the virtual environment as appropriate.
+Open **http://127.0.0.1:5173**. The Python API is at **http://127.0.0.1:8000/docs**. Vite proxies `/api` and `/snapshots` to FastAPI. Keep both terminals open while using the dashboard. If a review action says the local API is unavailable, restart the backend command in Terminal 1. In PowerShell, use `cd D:\bantayaso` (without `/d`); the other commands are the same.
 
-Keep both terminals open while using the dashboard. If a review action says the local API is unavailable, restart the Python backend command in the first terminal, then retry. The dashboard cannot save a review change while FastAPI is stopped.
-
-The first API startup creates `backend/straywatch.db` with **one example location and camera** (`CAM-001` at Town Plaza). It starts with **zero detections and zero snapshots**. The dashboard explains the camera → API → storage → review flow and refreshes every 15 seconds. Click **Generate one example event** to create a single Python generated snapshot and detection record, or send one through the device ingestion endpoint with the IoT simulator:
+On a fresh database, the first API startup creates `backend/straywatch.db` with **one example location and camera** (`CAM-001` at Town Plaza), and **zero detections and snapshots**. The dashboard explains the camera → API → storage → review flow and refreshes every 15 seconds. Click **Generate one example event** to create a single Python generated snapshot and detection record, or send one through the device ingestion endpoint with the IoT simulator:
 
 ```powershell
 .venv\Scripts\python.exe -m iot.simulator --device CAM-001 --dogs 2
 ```
 
-The simulator requires the API to be running. Change `--device` to any registered camera ID, or use **Generate example event for this camera** on a camera card. It uses Pillow to draw a clearly labeled **still frame**, with no camera or model needed. Simulated events do not mark a physical camera as online. A real camera integration can later use OpenCV and the existing `scripts/07_detect_stream.py` pipeline, then POST its validated count and encoded frame to `/api/detections`.
+The simulator requires the API to be running. Change `--device` to any registered camera ID, or use **Generate example event for this camera** on a camera card. It uses Pillow to draw a clearly labeled **still frame**, with no camera or model needed. Simulated events do not mark a physical camera as online.
+
+To send real model observations, follow the camera steps below. The helper selects `models/yolo26n_v4.pt` and the tested detection settings; its default API is `http://127.0.0.1:8000`.
+
+## Add and run a camera
+
+1. Keep the backend and website running in their own terminals, then open **http://127.0.0.1:5173**.
+2. In **CCTV Cameras → Add camera**, enter a unique ID such as `CAM-002` and a name. Choose an existing monitoring zone or create a new one. The zone gives future detections their location. `CAM-001` at Town Plaza is already registered as an example.
+3. Open a third Command Prompt terminal and run the camera using the same ID you registered. The first-time setup above installs the detector packages:
+
+   ```cmd
+   cd /d D:\bantayaso
+   .\bat\webcam_v4.bat --camera-id CAM-002 --source 0 --out results\v4\events_CAM-002.jsonl
+   ```
+
+   To use the already registered `CAM-001` with the first webcam instead, run `.\bat\webcam_v4.bat --camera-id CAM-001`.
+
+   `--camera-id` identifies the dashboard record; `--source` selects the actual video input. `0` is usually the laptop's first webcam. If `CAM-001` already uses that webcam, a second detector needs a different physical source. For a second USB webcam, use `--source 1` if Windows assigned it that index:
+
+   ```cmd
+   .\bat\webcam_v4.bat --camera-id CAM-002 --source 1 --out results\v4\events_CAM-002.jsonl
+   ```
+
+   For a network camera, replace `1` with its stream URL, for example `--source "rtsp://USER:PASSWORD@CAMERA_IP:554/stream"`. Use a separate detector terminal and output file for each camera running at the same time.
+4. Watch the preview for dog and person boxes. After a dog has appeared for at least **2 seconds and 3 processed frames**, the detector creates a report with one snapshot. It updates that report's peak counts and duration about every **5 seconds**, without another picture. A brief disappearance does not reset the report's dog count to zero. After **10 seconds without a dog**, it closes the report; a later arrival starts a new one. If dogs stay continuously, it creates a **new report with a fresh snapshot every minute**. Each new report appears above the older one in detection history. Person-only activity follows the same rule when no dog is visible. The Detections page refreshes every 15 seconds. Press **q** in the preview to stop the detector; press **Ctrl+C** in the backend and website terminals to stop those servers.
+
+On **CCTV Cameras**, select a camera card to open its details, location, latest snapshot, and detection history within the CCTV section. **Open in Detections** shows the same camera's records with its location selected; **All detections** returns to the full history. A camera with no events shows an empty history for that camera.
+
+Registering a camera only saves its ID, name, and zone; it does not start a feed. It begins **offline** and changes to **online** after its first camera event. The prototype does not yet mark it offline automatically when the detector stops. The camera card shows the latest saved snapshot, not continuous live video.
+
+For camera reports, `dog_count` is the **maximum dogs visible together during that report**. `snapshot_dog_count` is the count in its saved image; it may differ if more dogs appear later. Dashboard totals sum peak counts across reports, so they are **not a count of unique dogs**: a dog visible across two one-minute reports can appear in both totals. “Unaccompanied” is a proximity-based review flag, not proof that a dog is stray. Adjust the timing with `--confirm-after`, `--empty-after`, `--update-every`, and `--snapshot-interval 60` (seconds). If no event appears, check that the API is running at **http://127.0.0.1:8000/api/health**, the `--camera-id` exactly matches a registered camera, and `--source` points to a working camera. API uploads are retried once; failed event metadata remains in the configured JSONL output. More settings and limitations are in `docs/RUN_AND_INTEGRATE.md`.
+
+If a dog report has **zero people observed**, the dashboard flags it **Unaccompanied**, even if the report is short. When a person has been seen but their proximity to the dog is still uncertain, it shows **Checking** until the configured confirmation time passes. A person near the dog is labeled **Accompanied**. These are review suggestions based on detections, not proof of ownership.
 
 ### Dashboard features
 
-- API-backed totals, seven day trends, monitoring zone map, and recent captures after events arrive.
-- Searchable, filterable detection history with review, flag, individual delete, clear all, details, and CSV export.
+- API-backed totals, seven day trends, and recent captures after events arrive.
+- Searchable, filterable detection history with review, flag, individual delete, delete all, details, and CSV export.
+- An in-app notification bell for recent detections awaiting review. Open a notice to inspect its report, mark notices read, dismiss one with **X**, or use **Clear all**. Read and dismissed state is saved in this browser; clearing notices does not delete detections or change review status.
 - CCTV device list and registration, with connectivity state and a choice of an existing or newly created monitoring zone.
 - Analytics by day and monitoring zone.
 - Responsive layout and persistent light/dark mode.
 
 ### API and storage
 
-FastAPI routes include `/api/dashboard/summary`, `/api/devices`, `/api/devices/{device_id}`, `/api/detections`, `/api/detections/{detection_id}`, `/api/locations`, `/api/analytics`, and `/api/demo/simulate`. Camera registration accepts an existing `location_id` or a `new_location` object containing a zone name, barangay, and optional description; both camera and new zone are saved together. `POST /api/locations` can also register a zone by itself. The prototype map places new zones approximately until real coordinates are available. `POST /api/detections` accepts `multipart/form-data` fields `device_id`, `timestamp` (ISO 8601), `dog_count`, `confidence`, `source`, and optional `snapshot` (PNG, JPEG, or WebP; maximum 5 MB). Detection and device records are stored with SQLAlchemy in SQLite, with `DATABASE_URL` available to point at PostgreSQL later. Snapshot file references are stored in the database and served from `/snapshots/`. Review status is updated with `PATCH /api/detections/{detection_id}`. `DELETE /api/detections/{detection_id}` removes one **Reviewed** record, and `DELETE /api/detections` clears all records **only when every record is Reviewed**. Both remove snapshots no longer referenced by a record. Pending and Flagged records return HTTP 409 if deletion is attempted through the API.
+FastAPI routes include `/api/dashboard/summary`, `/api/devices`, `/api/devices/{device_id}`, `/api/detections`, `/api/detections/{detection_id}`, `/api/locations`, `/api/analytics`, and `/api/demo/simulate`. Camera registration accepts an existing `location_id` or a `new_location` object containing a zone name, barangay, and optional description; both camera and new zone are saved together. `POST /api/locations` can also register a zone by itself. `POST /api/detections` accepts `multipart/form-data` fields `device_id`, `timestamp` (ISO 8601), `dog_count`, `confidence`, `source`, and optional `snapshot` (PNG, JPEG, or WebP; maximum 5 MB). Camera uploads can also include `person_count`, `unaccompanied`, `track_id`, `duration_s`, `accompanied_ratio`, `max_dogs_in_view`, `snapshot_dog_count`, `event_state` (`active` or `closed`), `event_sequence` (increasing integer), and a unique `event_key`. A later sequence with the same key updates counts and state on the existing report while keeping its snapshot and review status. Detection and device records are stored with SQLAlchemy in SQLite, with `DATABASE_URL` available to point at PostgreSQL later. Snapshot file references are stored in the database and served from `/snapshots/`. Review status is updated with `PATCH /api/detections/{detection_id}`. `DELETE /api/detections/{detection_id}` deletes one record, and `DELETE /api/detections` deletes all records, regardless of review status. Both remove snapshots no longer referenced by a record; cameras and locations remain. The dashboard asks for confirmation before either delete action.
 
-The demo does not authenticate operators or devices, and its illustrations are placeholders rather than camera footage. Add authentication, device credentials, migration tooling, and actual image inference before real deployment.
+The prototype does not authenticate operators or devices. Add authentication, device credentials, and production migration tooling before real deployment.
 
 ## Existing ML work
 
 The machine learning part of **BantayAso**, an IoT system that helps barangays monitor stray dogs.
-A YOLO26n object detector finds `dog` and `person` in camera frames, a tracker turns detections
-into sightings, and a simple rule marks dogs with no person nearby as **unaccompanied** (our
-working definition of a likely stray). Each sighting becomes a small JSON record sent to the
-dashboard over MQTT.
+A YOLO26n object detector finds `dog` and `person` in camera frames. The detector groups frames
+into activity periods, and a proximity rule marks dogs with no person nearby as **unaccompanied** (our
+working definition of a likely stray). Activity records and their first snapshots go directly to the dashboard
+API. MQTT remains available as an optional additional output.
 
 ```
-camera / phone / CCTV  ->  edge node (07_detect_stream.py)  ->  MQTT  ->  cloud + dashboard
-                           YOLO26n + ByteTrack + "unaccompanied" rule
+camera / phone / CCTV -> edge node (07_detect_stream.py) -> HTTP API -> dashboard
+                         YOLO26n + ByteTrack + "unaccompanied" rule
+                         (optional: also publish records through MQTT)
 ```
 
 COSC 105 (Intelligent Systems) component, Cavite State University, BSCS 4-1 Group 4.
@@ -80,7 +121,7 @@ COSC 105 (Intelligent Systems) component, Cavite State University, BSCS 4-1 Grou
 | `scripts/04_train.py` | Trains YOLO26n, YOLOv5n and YOLO11n with identical settings |
 | `scripts/05_evaluate.py` | Precision, recall, F1, mAP, speed, confusion matrix; comparison table |
 | `scripts/06_export.py` | Export to NCNN (Raspberry Pi), ONNX (laptop), TFLite (Android), CoreML (iPhone) |
-| `scripts/07_detect_stream.py` | The edge node: live detection, tracking, sighting records, MQTT |
+| `scripts/07_detect_stream.py` | The edge node: live detection, activity reports, MQTT |
 | `docs/dataset_documentation.md` | Dataset and ML documentation template (follows the course guide, section D) |
 | `results/` | Generated tables and logs for the paper (committed) |
 | `data/`, `runs/` | Datasets and training outputs (not committed, too large) |

@@ -54,6 +54,16 @@ class DetectionCreate(BaseModel):
     device_id: str
     timestamp: datetime
     dog_count: int = Field(ge=0, le=100)
+    person_count: int = Field(default=0, ge=0, le=100)
+    unaccompanied: bool | None = None
+    track_id: int | None = Field(default=None, ge=0)
+    duration_s: float | None = Field(default=None, ge=0)
+    accompanied_ratio: float | None = Field(default=None, ge=0, le=1)
+    max_dogs_in_view: int | None = Field(default=None, ge=0)
+    snapshot_dog_count: int | None = Field(default=None, ge=0)
+    event_key: str | None = Field(default=None, min_length=1, max_length=120)
+    event_state: Literal["active", "closed"] = "closed"
+    event_sequence: int = Field(default=0, ge=0)
     confidence: float = Field(ge=0, le=1)
     review_status: ReviewStatus = "pending"
     source: Literal["simulator", "camera"] = "simulator"
@@ -69,6 +79,15 @@ class DetectionOut(BaseModel):
     device_id: str
     timestamp: datetime
     dog_count: int
+    person_count: int
+    unaccompanied: bool | None
+    track_id: int | None
+    duration_s: float | None
+    accompanied_ratio: float | None
+    max_dogs_in_view: int | None
+    snapshot_dog_count: int | None
+    event_state: str
+    event_sequence: int
     confidence: float
     review_status: ReviewStatus
     snapshot_path: str | None

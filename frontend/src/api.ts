@@ -1,6 +1,6 @@
 export type Location = { id: number; name: string; barangay: string; latitude: number; longitude: number; description: string }
 export type Device = { id: string; name: string; status: string; last_seen: string | null; location: Location }
-export type Detection = { id: string; device_id: string; timestamp: string; dog_count: number; confidence: number; review_status: 'pending' | 'reviewed' | 'flagged'; snapshot_path: string | null; source: string; location: Location; device: Device }
+export type Detection = { id: string; device_id: string; timestamp: string; dog_count: number; person_count: number; unaccompanied: boolean | null; track_id: number | null; duration_s: number | null; accompanied_ratio: number | null; max_dogs_in_view: number | null; snapshot_dog_count: number | null; event_state: 'active' | 'closed'; event_sequence: number; confidence: number; review_status: 'pending' | 'reviewed' | 'flagged'; snapshot_path: string | null; source: string; location: Location; device: Device }
 export type Summary = { dogs_today: number; detections_today: number; total_detections: number; active_cameras: number; total_cameras: number; pending_reviews: number; locations_monitored: number }
 export type Analytics = { daily: { date: string; detections: number; dogs: number }[]; by_location: { location_id: number; name: string; count: number }[] }
 export type NewLocation = { name: string; barangay: string; description: string }

@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -13,18 +13,34 @@ from .database import Base, SessionLocal, engine, get_db
 from .models import Detection, Device, Location
 from .schemas import DetectionCreate, DetectionOut, DetectionPatch, DeviceCreate, DeviceOut, LocationCreate, LocationOut
 from .seed import seed_database
-from .services import SNAPSHOT_DIR, ReviewRequiredError, analytics, clear_detections, create_detection, dashboard_summary, delete_detection, detection_query
+from .services import SNAPSHOT_DIR, analytics, clear_detections, create_detection, dashboard_summary, delete_detection, detection_query
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    # Existing prototype databases predate the camera inference fields.
+    if engine.dialect.name == "sqlite":
+        columns = {column["name"] for column in inspect(engine).get_columns("detections")}
+        additions = {
+            "person_count": "INTEGER NOT NULL DEFAULT 0", "unaccompanied": "BOOLEAN",
+            "track_id": "INTEGER", "duration_s": "FLOAT", "accompanied_ratio": "FLOAT",
+            "max_dogs_in_view": "INTEGER", "event_key": "VARCHAR(120)",
+            "snapshot_dog_count": "INTEGER",
+            "event_state": "VARCHAR(20) NOT NULL DEFAULT 'closed'",
+            "event_sequence": "INTEGER NOT NULL DEFAULT 0",
+        }
+        with engine.begin() as connection:
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.execute(text(f"ALTER TABLE detections ADD COLUMN {name} {definition}"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_detections_event_key ON detections (event_key)"))
     with SessionLocal() as db:
         seed_database(db)
     yield
 
 
-app = FastAPI(title="StrayWatch Dashboard API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="BantayAso Dashboard API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.mount("/snapshots", StaticFiles(directory=SNAPSHOT_DIR), name="snapshots")
@@ -130,10 +146,21 @@ def detection(detection_id: str, db: Session = Depends(get_db)):
 @app.post("/api/detections", response_model=DetectionOut, status_code=201)
 async def add_detection(device_id: str = Form(...), timestamp: datetime = Form(...), dog_count: int = Form(...),
                         confidence: float = Form(...), source: str = Form("simulator"),
+                        person_count: int = Form(0), unaccompanied: bool | None = Form(None),
+                        track_id: int | None = Form(None), duration_s: float | None = Form(None),
+                        accompanied_ratio: float | None = Form(None), max_dogs_in_view: int | None = Form(None),
+                        snapshot_dog_count: int | None = Form(None),
+                        event_key: str | None = Form(None),
+                        event_state: str = Form("closed"), event_sequence: int = Form(0),
                         snapshot: UploadFile | None = File(None), db: Session = Depends(get_db)):
     try:
         payload = DetectionCreate(device_id=device_id, timestamp=timestamp, dog_count=dog_count,
-                                  confidence=confidence, source=source)
+                                  confidence=confidence, source=source, person_count=person_count,
+                                  unaccompanied=unaccompanied, track_id=track_id, duration_s=duration_s,
+                                  accompanied_ratio=accompanied_ratio, max_dogs_in_view=max_dogs_in_view,
+                                  snapshot_dog_count=snapshot_dog_count,
+                                  event_key=event_key, event_state=event_state,
+                                  event_sequence=event_sequence)
     except Exception as error:
         raise HTTPException(422, str(error)) from error
     data, suffix = None, ".png"
@@ -165,18 +192,13 @@ def update_detection(detection_id: str, payload: DetectionPatch, db: Session = D
 def remove_detection(detection_id: str, db: Session = Depends(get_db)):
     try:
         return {"deleted_id": delete_detection(db, detection_id)}
-    except ReviewRequiredError as error:
-        raise HTTPException(409, str(error)) from error
     except ValueError as error:
         raise HTTPException(404, str(error)) from error
 
 
 @app.delete("/api/detections")
 def remove_all_detections(db: Session = Depends(get_db)):
-    try:
-        return {"deleted": clear_detections(db)}
-    except ReviewRequiredError as error:
-        raise HTTPException(409, str(error)) from error
+    return {"deleted": clear_detections(db)}
 
 
 @app.get("/api/analytics")

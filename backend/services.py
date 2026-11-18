@@ -13,10 +13,6 @@ SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 MANILA = timezone(timedelta(hours=8))
 
 
-class ReviewRequiredError(Exception):
-    """A detection must be reviewed before it can be deleted."""
-
-
 def local_date(value: datetime):
     aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
     return aware.astimezone(MANILA).date()
@@ -29,6 +25,32 @@ def detection_query():
 
 
 def create_detection(db: Session, payload: DetectionCreate, snapshot: bytes | None = None, suffix: str = ".png"):
+    timestamp = payload.timestamp.replace(tzinfo=timezone.utc) if payload.timestamp.tzinfo is None else payload.timestamp.astimezone(timezone.utc)
+    # A camera report with dogs but no observed person cannot be accompanied.
+    # Normalize older camera clients that may still send False for this case.
+    unaccompanied = (True if payload.source == "camera" and payload.dog_count > 0
+                     and payload.person_count == 0 else payload.unaccompanied)
+    if payload.event_key:
+        existing = db.execute(detection_query().where(Detection.event_key == payload.event_key)).scalar_one_or_none()
+        if existing:
+            if (existing.source == "camera" and payload.source == "camera"
+                    and existing.device_id == payload.device_id
+                    and payload.event_sequence > existing.event_sequence):
+                existing.timestamp = timestamp
+                existing.dog_count = payload.dog_count
+                existing.person_count = payload.person_count
+                existing.unaccompanied = unaccompanied
+                existing.duration_s = payload.duration_s
+                existing.accompanied_ratio = payload.accompanied_ratio
+                existing.max_dogs_in_view = payload.max_dogs_in_view
+                existing.confidence = payload.confidence
+                existing.event_state = payload.event_state
+                existing.event_sequence = payload.event_sequence
+                # Keep the original image and operator review state. Updates carry no new image.
+                existing.device.status = "online"
+                existing.device.last_seen = timestamp
+                db.commit()
+            return existing
     device = db.get(Device, payload.device_id)
     if device is None:
         raise ValueError("Device not found")
@@ -38,13 +60,22 @@ def create_detection(db: Session, payload: DetectionCreate, snapshot: bytes | No
         filename = f"{detection_id}{suffix}"
         (SNAPSHOT_DIR / filename).write_bytes(snapshot)
         snapshot_path = f"/snapshots/{filename}"
-    timestamp = payload.timestamp.replace(tzinfo=timezone.utc) if payload.timestamp.tzinfo is None else payload.timestamp.astimezone(timezone.utc)
     event = Detection(
         id=detection_id,
         device_id=device.id,
         location_id=device.location_id,
         timestamp=timestamp,
         dog_count=payload.dog_count,
+        person_count=payload.person_count,
+        unaccompanied=unaccompanied,
+        track_id=payload.track_id,
+        duration_s=payload.duration_s,
+        accompanied_ratio=payload.accompanied_ratio,
+        max_dogs_in_view=payload.max_dogs_in_view,
+        snapshot_dog_count=payload.snapshot_dog_count,
+        event_key=payload.event_key,
+        event_state=payload.event_state,
+        event_sequence=payload.event_sequence,
         confidence=payload.confidence,
         review_status=payload.review_status,
         snapshot_path=snapshot_path,
@@ -74,8 +105,6 @@ def delete_detection(db: Session, detection_id: str):
     event = db.get(Detection, detection_id)
     if event is None:
         raise ValueError("Detection not found")
-    if event.review_status != "reviewed":
-        raise ReviewRequiredError("Mark this detection as Reviewed before deleting it")
     snapshot_path = event.snapshot_path
     db.delete(event)
     db.commit()
@@ -85,8 +114,6 @@ def delete_detection(db: Session, detection_id: str):
 
 def clear_detections(db: Session):
     events = db.execute(select(Detection)).scalars().all()
-    if any(event.review_status != "reviewed" for event in events):
-        raise ReviewRequiredError("Review every detection before using Clear all")
     snapshot_paths = {event.snapshot_path for event in events if event.snapshot_path}
     for event in events:
         db.delete(event)

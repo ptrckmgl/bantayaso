@@ -9,20 +9,18 @@ Everything below was tested on Windows 11 with Python 3.14, PyTorch 2.14 (CUDA) 
 |---|---|
 | `models/yolo26n_v4.pt` | **Final model.** YOLO26n, classes `dog` (0) and `person` (1). Use this one. |
 | `models/yolo26n_v3.pt` | Backup (earlier model, trained on data whose test split shared cameras with training). |
-| `scripts/07_detect_stream.py` | The edge node: reads a camera/stream/video, detects, tracks dogs, decides "unaccompanied", writes one JSON record per dog sighting. |
+| `scripts/07_detect_stream.py` | The edge node: reads a camera/stream/video, detects dogs and people, and creates fresh snapshot reports each minute of continuous activity. |
 
-The model only finds dogs and people in an image. The "stray" decision (a dog with no person
-near it) is made in `07_detect_stream.py`, so the dashboard receives finished **sighting
-records**, not raw boxes.
+The model only finds dogs and people in an image. The "unaccompanied" review flag (a dog with no person
+near it) is made in `07_detect_stream.py`. The dashboard receives camera activity reports.
 
 ## 1. Setup (once)
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
-# install PyTorch FIRST using the command from https://pytorch.org/get-started/locally/
-# (a plain `pip install torch` on Windows gives the CPU-only build; CPU works but is slow)
-pip install -r requirements.txt
+# for GPU acceleration, install the matching PyTorch CUDA build first
+pip install -r backend/requirements.txt -r requirements-inference.txt
 ```
 
 Only `ultralytics`, `lap` (tracker), `pyyaml` and `paho-mqtt` are needed to run the detector;
@@ -49,51 +47,90 @@ record times and the `night` field match the footage.
 
 Output goes to `results/events.jsonl` (one JSON per line) and is printed to the console.
 
-## 3. Connect to the dashboard (MQTT)
+## 3. Connect to the dashboard (HTTP)
+
+Start the FastAPI backend and React dashboard as shown in the README. Register the camera and
+its monitoring zone in the dashboard. Then run the detector with that exact camera ID:
+
+```powershell
+bat\webcam_v4 --camera-id CAM-001
+```
+
+The detector confirms an activity period after 2 seconds and at least 3 processed frames.
+It posts one annotated JPEG and an `active` report to `/api/detections`. While activity
+continues, it updates that same report about every 5 seconds without another image. A brief
+absence keeps the report open and never changes its peak dog count to zero. After 10 seconds
+without a dog, the report becomes `closed`; a later arrival starts a new report. When dogs
+remain visible continuously, a new report with a fresh snapshot starts every minute and appears
+above the older report in detection history.
+Person-only periods follow the same rule when no dog is visible. Change the defaults with
+`--confirm-after`, `--min-frames`, `--update-every`, `--empty-after`, and
+`--snapshot-interval` (seconds, default 60; 0 disables periodic fresh reports).
+
+For a dog report, `dog_count` and `max_dogs_in_view` are the peak number of dog boxes
+visible together during that report. `snapshot_dog_count` is the number in the one saved
+image. The two may differ if more dogs appear after that image. Dashboard totals add peak
+counts across reports; they are not counts of unique animals, including when one dog remains
+visible across multiple one-minute reports. The API attaches the
+registered camera's location and preserves its snapshot and review status during updates.
+The web page refreshes every 15 seconds.
+
+Use `--api-url http://HOST:8000` when the API runs on another machine. An empty `--api-url ''`
+disables HTTP upload. If an upload fails after a retry, the detector logs the failure and leaves
+event metadata in its JSONL output (the helper uses `results/v4/events_webcam.jsonl`). The
+snapshot is retried with the next update while that report remains open. If connectivity has not
+returned before the report closes, rerun a recorded clip or resubmit the event before relying
+on dashboard totals. A camera ID that is not registered
+receives HTTP 404.
+
+## 4. Optional MQTT output
 
 Add `--mqtt-host <broker address>` (and `--mqtt-port`, default 1883). The detector then also
 publishes each record, QoS 1, to:
 
 | Topic | When | Content |
 |---|---|---|
-| `bantayaso/<device-id>/events` | one per finished dog sighting | the sighting record below |
+| `bantayaso/<device-id>/events` | one initial record, metadata updates, and one close record per confirmed period | the activity record below |
 | `bantayaso/<device-id>/status` | start of a session, then every `--heartbeat` s (default 60) | `session_start` and `heartbeat` records (dogs in view, frames processed, speed in ms) |
 
 `<device-id>` is set with `--device-id` (default `ba-node-01`); `--camera-id` names the camera
-(default `cam-1`). A public test broker such as `test.mosquitto.org` works for a demo, but anyone
+(default `CAM-001`). A public test broker such as `test.mosquitto.org` works for a demo, but anyone
 can read it: use your own broker for real data.
 
-Subscribe from the dashboard side to `bantayaso/+/events` to receive all devices.
+MQTT is an additional output. The dashboard's built-in ingestion uses HTTP, not an MQTT subscriber.
 
-### Sighting record (the thing the dashboard stores)
+### Activity record (one dashboard row per `event_key`)
 
 ```json
-{"type": "sighting", "device_id": "ba-node-01", "camera_id": "cam-1", "track_id": 7,
- "start": "2026-11-21T08:15:02", "end": "2026-11-21T08:15:19", "duration_s": 17.0,
- "unaccompanied": true, "status": "UNACCOMPANIED", "accompanied_ratio": 0.0, "max_conf": 0.91,
- "frames": 34, "max_dogs_in_view": 2, "night": false}
+{"type": "dog_episode", "device_id": "ba-node-01", "camera_id": "CAM-001",
+ "event_key": "unique-period-key", "event_state": "active", "event_sequence": 0,
+ "start": "2026-11-21T08:15:02", "end": "2026-11-21T08:15:04", "duration_s": 2.0,
+ "dog_count": 2, "person_count": 0, "snapshot_dog_count": 2,
+ "unaccompanied": true, "accompanied_ratio": 0.0, "max_conf": 0.91,
+ "frames": 3, "max_dogs_in_view": 2, "night": false}
 ```
 
 | Field | Meaning |
 |---|---|
-| `unaccompanied` | `true` = no person was near the dog for most of the sighting (our stand-in for "stray"; staff decide) |
-| `accompanied_ratio` | share of frames with a person near the dog (below 0.3 = unaccompanied) |
-| `duration_s`, `start`, `end` | how long the dog was in view (passing by vs lingering) |
+| `unaccompanied` | `true` when no person was detected in the report, or when a dog stayed away from a previously detected person long enough; `null` means proximity is still being checked |
+| `accompanied_ratio` | share of dog frames with a nearby person; used with `--stray-confirm` when people have been seen |
+| `duration_s`, `start`, `end` | how long the activity was observed |
 | `max_dogs_in_view` | dogs seen together (a pack) |
-| `night` | sighting started 18:00 to 06:00 (or per `--night-hours`) |
+| `night` | activity started 18:00 to 06:00 (or per `--night-hours`) |
 | `max_conf` | detector's best confidence for the dog |
-| `track_id` | tracker id, only meaningful within one run |
+| `event_key`, `event_sequence` | report identity and increasing update number; repeated or older updates do not create extra rows |
+| `event_state` | `active` until the scene has been empty for 10 seconds or the one-minute snapshot interval ends, then `closed` |
 
-Repeat sightings of the same place on several days make a hotspot. The system cannot recognise
-an individual dog, so the same dog passing twice is two sightings.
+Repeat activity at the same place on several days can indicate a hotspot. The system cannot recognise
+an individual dog, so one animal can appear in multiple reports.
 
-## 4. Test the whole chain without a camera
+## 5. Test the whole chain without a camera
 
 ```powershell
-python scripts/07_detect_stream.py --weights models/yolo26n_v4.pt --source clip.mp4 --mqtt-host test.mosquitto.org
+python scripts/07_detect_stream.py --source clip.mp4 --camera-id CAM-001
 ```
 
-then subscribe with any MQTT client (for example `mosquitto_sub -h test.mosquitto.org -t "bantayaso/#" -v`).
+Open the dashboard's Detections page to see the snapshots and review them.
 
 ## Troubleshooting
 

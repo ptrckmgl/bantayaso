@@ -11,20 +11,11 @@ Sources:
     python scripts/07_detect_stream.py --source http://PHONE_IP:8080/video --show
     python scripts/07_detect_stream.py --source clip.mp4 --mqtt-host test.mosquitto.org
 
-Each dog is tracked (ByteTrack) so one dog walking past is ONE sighting, not one per frame.
-A dog is "unaccompanied" when no person box is near it for most of the frames it is seen
-in. This is our operational stand-in for "stray": the camera cannot see ownership, so the
-system flags unaccompanied dog sightings and barangay staff decide (see the stray definition
-in docs/dataset_documentation.md). Each record also carries extra evidence (duration, how many
-dogs were in view together, night-time) without combining it into a score.
-
-Output: one JSON line per finished sighting in results/events.jsonl, optionally published
-to MQTT topic bantayaso/<device-id>/events, plus a status heartbeat every --heartbeat s.
-Example record:
-  {"type": "sighting", "device_id": "ba-node-01", "camera_id": "cam-1", "track_id": 7,
-   "start": "2026-11-21T08:15:02", "end": "2026-11-21T08:15:19", "duration_s": 17.0,
-   "unaccompanied": true, "accompanied_ratio": 0.0, "max_conf": 0.91, "frames": 34,
-   "max_dogs_in_view": 2, "night": false}
+One confirmed period of dog activity produces a snapshot and a dashboard report.
+Counts and duration update on that report without taking another picture. A continuous
+scene gets a fresh report after one minute; an empty scene closes after ten seconds.
+Person-only activity follows the same rule.
+"Unaccompanied" is a proximity-based review flag, not proof of ownership.
 """
 import argparse
 import json
@@ -33,11 +24,15 @@ import math
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from uuid import uuid4
 
 import cv2
 from ultralytics import YOLO
 
-from common import RESULTS, RUNS
+from common import RESULTS
+from episodes import EpisodeReporter
 
 # Ultralytics prints "Waiting for stream" every time it polls a live camera faster than the
 # camera delivers frames (common for webcams in low light). It is harmless, so hide it.
@@ -55,11 +50,26 @@ def is_accompanied(dog_box, person_boxes, k):
     return any(math.hypot(px - dx, py - dy) <= reach for px, py in map(center, person_boxes))
 
 
+def snapshot_for_result(result):
+    """Keep annotated uploads within the API's five-megabyte limit."""
+    frame = result.plot()
+    height, width = frame.shape[:2]
+    if max(height, width) > 1600:
+        scale = 1600 / max(height, width)
+        frame = cv2.resize(frame, (round(width * scale), round(height * scale)))
+    for quality in (75, 55):
+        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if ok and len(encoded) <= 5_000_000:
+            return encoded.tobytes()
+    return None
+
+
 class Publisher:
     def __init__(self, args):
         self.out = Path(args.out)
         self.out.parent.mkdir(parents=True, exist_ok=True)
         self.topic = f"bantayaso/{args.device_id}"
+        self.api_url = args.api_url.rstrip("/") if args.api_url else None
         self.client = None
         if args.mqtt_host:
             import paho.mqtt.client as mqtt
@@ -67,14 +77,59 @@ class Publisher:
             self.client.connect(args.mqtt_host, args.mqtt_port)
             self.client.loop_start()
 
-    def send(self, kind, record):
+    def send(self, kind, record, snapshot=None):
         line = json.dumps(record)
         with open(self.out, "a", encoding="utf-8") as f:
             f.write(line + "\n")
         if self.client:
             # qos=1: the broker acknowledges; paho queues messages while offline
             self.client.publish(f"{self.topic}/{kind}", line, qos=1)
+        if kind == "events" and self.api_url:
+            uploaded = False
+            fields = {
+                "device_id": record["camera_id"], "timestamp": record.get("end", record.get("time")),
+                "dog_count": record.get("dog_count", 1), "person_count": record["person_count"],
+                "confidence": record["max_conf"], "source": "camera",
+                "event_key": record["event_key"],
+                "event_state": record.get("event_state", "closed"),
+                "event_sequence": record.get("event_sequence", 0),
+            }
+            if "unaccompanied" in record:
+                fields.update(duration_s=record["duration_s"],
+                              accompanied_ratio=record["accompanied_ratio"],
+                              max_dogs_in_view=record["max_dogs_in_view"])
+                if record["unaccompanied"] is not None:
+                    fields["unaccompanied"] = str(record["unaccompanied"]).lower()
+            if "track_id" in record:
+                fields["track_id"] = record["track_id"]
+            if record.get("snapshot_dog_count") is not None:
+                fields["snapshot_dog_count"] = record["snapshot_dog_count"]
+            boundary = f"----bantayaso{uuid4().hex}"
+            body = bytearray()
+            for name, value in fields.items():
+                body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+            if snapshot:
+                body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="snapshot"; filename="capture.jpg"\r\nContent-Type: image/jpeg\r\n\r\n'.encode())
+                body.extend(snapshot)
+                body.extend(b"\r\n")
+            body.extend(f"--{boundary}--\r\n".encode())
+            for attempt in range(2):
+                try:
+                    request = Request(f"{self.api_url}/api/detections", data=bytes(body),
+                                      headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                                      method="POST")
+                    with urlopen(request, timeout=5) as response:
+                        response.read()
+                    uploaded = True
+                    break
+                except (HTTPError, URLError, TimeoutError) as error:
+                    if attempt:
+                        logging.error("Dashboard upload failed for %s: %s; event remains in %s",
+                                      record["event_key"], error, self.out)
+                    else:
+                        time.sleep(1)
         print(line)
+        return uploaded if kind == "events" and self.api_url else True
 
 
 def body_dog_indices(cls, xyxy, dog_id, person_id, contain=0.6, gap=0.3):
@@ -111,7 +166,7 @@ def body_dog_indices(cls, xyxy, dog_id, person_id, contain=0.6, gap=0.3):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="0")
-    ap.add_argument("--weights", default=str(RUNS / "train" / "yolo26n" / "weights" / "best.pt"),
+    ap.add_argument("--weights", default="models/yolo26n_v4.pt",
                     help="trained model (.pt, or an exported _ncnn_model folder / .onnx)")
     ap.add_argument("--conf", type=float, default=0.4, help="dog confidence threshold (use best_conf from 05_evaluate.py)")
     ap.add_argument("--person-conf", type=float, default=None,
@@ -121,13 +176,18 @@ def main():
                     help="seconds a person box is remembered after it was last seen, so a person "
                          "flickering out of detection still counts as near the dog (0 = off)")
     ap.add_argument("--stray-confirm", type=float, default=0.0,
-                    help="only call a dog 'unaccompanied' if it was also alone for at least this many "
-                         "seconds in a row (0 = off)")
+                    help="when people were seen, wait this many seconds without a nearby person "
+                         "before flagging unaccompanied (0 = off); zero people is flagged immediately")
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--fps", type=float, default=5.0, help="video files: frames processed per second (dogs need ~2-5)")
     ap.add_argument("--live-stride", type=int, default=1, help="live streams: process every Nth frame")
-    ap.add_argument("--lost-after", type=float, default=5.0, help="seconds unseen before a sighting ends")
-    ap.add_argument("--min-frames", type=int, default=3, help="ignore tracks shorter than this (noise)")
+    ap.add_argument("--lost-after", type=float, default=5.0, help="seconds before an overlay track is forgotten")
+    ap.add_argument("--min-frames", type=int, default=3, help="minimum positive frames before a report")
+    ap.add_argument("--confirm-after", type=float, default=2.0, help="seconds of activity before the first report")
+    ap.add_argument("--empty-after", type=float, default=10.0, help="seconds without activity before closing a report")
+    ap.add_argument("--update-every", type=float, default=5.0, help="seconds between metadata updates; no new image")
+    ap.add_argument("--snapshot-interval", type=float, default=60.0,
+                    help="seconds of continuous activity before a fresh report and snapshot (0 = off)")
     ap.add_argument("--near-k", type=float, default=2.0, help="person within k x dog-box diagonal = with owner")
     ap.add_argument("--accompanied-ratio", type=float, default=0.3,
                     help="share of frames with a person nearby above which the dog counts as accompanied")
@@ -136,7 +196,9 @@ def main():
     ap.add_argument("--video-start", help="video files: when the clip was filmed, e.g. 2026-11-18T19:30 "
                                           "(default: now), so record times and 'night' match the footage")
     ap.add_argument("--device-id", default="ba-node-01")
-    ap.add_argument("--camera-id", default="cam-1")
+    ap.add_argument("--camera-id", default="CAM-001", help="registered dashboard camera ID; its zone supplies the location")
+    ap.add_argument("--api-url", default="http://127.0.0.1:8000",
+                    help="dashboard backend URL (empty string disables direct upload)")
     ap.add_argument("--heartbeat", type=float, default=60.0)
     ap.add_argument("--mqtt-host")
     ap.add_argument("--mqtt-port", type=int, default=1883)
@@ -158,7 +220,7 @@ def main():
         cap.release()
     # process about --fps frames per second of video; live streams use their own frame rate
     stride = max(1, round(cap_fps / args.fps)) if is_file else args.live_stride
-    t0 = datetime.fromisoformat(args.video_start) if (is_file and args.video_start) else datetime.now()
+    t0 = datetime.fromisoformat(args.video_start).astimezone() if (is_file and args.video_start) else datetime.now().astimezone()
 
     def is_night(t):
         start, end = args.night_hours
@@ -191,32 +253,26 @@ def main():
                                      "person_conf": person_conf, "person_memory_s": args.person_memory,
                                      "stray_confirm_s": args.stray_confirm, "near_k": args.near_k,
                                      "accompanied_ratio": args.accompanied_ratio,
+                                     "confirm_after_s": args.confirm_after,
+                                     "empty_after_s": args.empty_after,
+                                     "update_every_s": args.update_every,
+                                     "snapshot_interval_s": args.snapshot_interval,
                                      "suppress_dog_in_person": args.suppress_dog_in_person,
                                      "imgsz": args.imgsz}})
-    tracks = {}  # id -> dict(start, last, frames, near, max_conf, alone_since, max_alone_s)
+    dogs = EpisodeReporter("dog", args.device_id, args.camera_id, pub.send, is_night,
+                           args.confirm_after, args.min_frames, args.empty_after,
+                           args.update_every, args.accompanied_ratio, args.stray_confirm,
+                           args.snapshot_interval)
+    people = EpisodeReporter("person", args.device_id, args.camera_id, pub.send, is_night,
+                             args.confirm_after, args.min_frames, args.empty_after,
+                             args.update_every, snapshot_interval=args.snapshot_interval)
+    tracks = {}  # track id -> latest position and proximity, for preview labels only
     recent_persons = []  # (time, box) of person boxes, kept for --person-memory seconds
     last_beat, frame_i, processed, suppressed = 0.0, 0, 0, 0
 
     def now_ts():
         # video files use video time so system tests are repeatable; live streams use the clock
-        return t0 + timedelta(seconds=frame_i / cap_fps) if is_file else datetime.now()
-
-    def finish(tid, tr):
-        if tr["frames"] < args.min_frames:
-            return
-        ratio = tr["near"] / tr["frames"]
-        alone_s = max(tr["max_alone_s"], (tr["last"] - tr["alone_since"]).total_seconds()
-                      if tr["alone_since"] else 0.0)
-        pub.send("events", {
-            "type": "sighting", "device_id": args.device_id, "camera_id": args.camera_id,
-            "track_id": int(tid), "start": tr["start"].isoformat(timespec="seconds"),
-            "end": tr["last"].isoformat(timespec="seconds"),
-            "duration_s": round((tr["last"] - tr["start"]).total_seconds(), 1),
-            "unaccompanied": (unacc := ratio < args.accompanied_ratio and alone_s >= args.stray_confirm),
-            "status": "UNACCOMPANIED" if unacc else "accompanied",
-            "accompanied_ratio": round(ratio, 2), "max_alone_s": round(alone_s, 1),
-            "max_conf": round(tr["max_conf"], 2), "frames": tr["frames"],
-            "max_dogs_in_view": tr["max_dogs"], "night": is_night(tr["start"])})
+        return t0 + timedelta(seconds=frame_i / cap_fps) if is_file else datetime.now().astimezone()
 
     results = model.track(source=source, stream=True, persist=True, tracker=tracker,
                           conf=infer_conf, imgsz=args.imgsz, classes=[DOG, PERSON], verbose=False,
@@ -244,6 +300,7 @@ def main():
             confs = boxes.conf.tolist() if boxes is not None else []
             ids = boxes.id.int().tolist() if boxes is not None and boxes.id is not None else [None] * len(cls)
             persons = [b for c, b in zip(cls, xyxy) if c == PERSON]
+            visible_person_count = len(persons)
             if args.person_memory > 0:
                 # remember person boxes for a moment, so a walker who flickers out of detection
                 # for a few frames still counts as near the dog
@@ -251,29 +308,32 @@ def main():
                                   if (ts - t).total_seconds() <= args.person_memory]
                 recent_persons += [(ts, b) for b in persons]
                 persons = [b for _, b in recent_persons]
-            dogs_now = sum(1 for c, tid in zip(cls, ids) if c == DOG and tid is not None)
+            dogs_now = cls.count(DOG)
+            dog_boxes = [b for c, b in zip(cls, xyxy) if c == DOG]
+            dogs.observe(ts, dogs_now, visible_person_count,
+                         max((cf for c, cf in zip(cls, confs) if c == DOG), default=0.0),
+                         all_near=bool(dog_boxes) and all(is_accompanied(b, persons, args.near_k)
+                                                          for b in dog_boxes),
+                         capture=lambda: snapshot_for_result(r))
+            # A dog takes precedence over a person-only report. A person-only period
+            # continues only when no dog boxes are present.
+            people.observe(ts, visible_person_count if not dogs_now else 0,
+                           visible_person_count,
+                           max((cf for c, cf in zip(cls, confs) if c == PERSON), default=0.0),
+                           capture=lambda: snapshot_for_result(r))
             for c, b, cf, tid in zip(cls, xyxy, confs, ids):
                 if c != DOG or tid is None:
                     continue
-                tr = tracks.setdefault(tid, {"start": ts, "last": ts, "frames": 0, "near": 0,
-                                             "max_conf": 0.0, "max_dogs": 0,
-                                             "alone_since": None, "max_alone_s": 0.0})
-                tr["last"], tr["frames"] = ts, tr["frames"] + 1
+                tr = tracks.setdefault(tid, {"last": ts, "alone_since": None})
+                tr["last"] = ts
                 near = is_accompanied(b, persons, args.near_k)
-                tr["near"] += near
                 tr["near_now"] = near
-                # longest continuous stretch with no person near (for --stray-confirm)
                 if near:
-                    if tr["alone_since"]:
-                        tr["max_alone_s"] = max(tr["max_alone_s"], (ts - tr["alone_since"]).total_seconds())
                     tr["alone_since"] = None
                 elif tr["alone_since"] is None:
                     tr["alone_since"] = ts
-                tr["max_conf"] = max(tr["max_conf"], cf)
-                tr["max_dogs"] = max(tr["max_dogs"], dogs_now)
-
             for tid in [t for t, tr in tracks.items() if (ts - tr["last"]).total_seconds() > args.lost_after]:
-                finish(tid, tracks.pop(tid))
+                tracks.pop(tid)
 
             if time.time() - last_beat >= args.heartbeat:
                 last_beat = time.time()
@@ -307,8 +367,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        for tid, tr in list(tracks.items()):
-            finish(tid, tr)
+        dogs.close()
+        people.close()
         if args.show:
             cv2.destroyAllWindows()
 

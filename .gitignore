@@ -41,6 +41,9 @@ frontend/dist/
 frontend/dashboard-preview.png
 frontend/*.tsbuildinfo
 backend/straywatch.db
+results/events*.jsonl
+results/**/events*.jsonl
+results/**/camera_*.log
 backend/storage/snapshots/*.svg
 backend/storage/snapshots/*.png
 backend/storage/snapshots/*.jpg
