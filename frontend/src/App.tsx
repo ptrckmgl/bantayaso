@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity, ArrowDownToLine, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, Check, CheckCircle2,
   ChevronDown, ChevronRight, Clock3, Dog, Eye, Flag, LayoutDashboard,
-  MapPin, Menu, Moon, Plus, Radio, RefreshCw, Search, Settings2, ShieldCheck,
-  SlidersHorizontal, Sun, Trash2, Video, Wifi, WifiOff, X, ChartNoAxesCombined, AlertTriangle,
+  MapPin, Menu, Moon, PawPrint, Plus, Radio, RefreshCw, Search, Settings2, ShieldCheck,
+  SlidersHorizontal, Sun, Trash2, Video, WifiOff, X, ChartNoAxesCombined, AlertTriangle,
 } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, type Analytics, type Detection, type Device, type Location, type Summary } from './api'
@@ -52,12 +52,106 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`status-pill status-${status}`}><span className="status-dot" />{status.charAt(0).toUpperCase() + status.slice(1)}</span>
 }
 
+function CustomDropdown<T extends string | number>({
+  icon: Icon,
+  value,
+  options,
+  onChange,
+  disabled = false,
+  ariaLabel,
+}: {
+  icon?: typeof SlidersHorizontal
+  value: T
+  options: { value: T; label: string }[]
+  onChange: (val: T) => void
+  disabled?: boolean
+  ariaLabel?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [open])
+
+  const selectedOption = options.find(o => o.value === value)
+
+  return (
+    <div className={`custom-dropdown-wrap ${open ? 'is-open' : ''} ${disabled ? 'is-disabled' : ''}`} ref={ref}>
+      <button
+        type="button"
+        className="custom-dropdown-trigger"
+        onClick={() => !disabled && setOpen(!open)}
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        disabled={disabled}
+      >
+        {Icon && <Icon size={17} className="dropdown-trigger-icon" />}
+        <span className="dropdown-trigger-label">{selectedOption?.label || ''}</span>
+        <ChevronDown size={15} className={`dropdown-chevron ${open ? 'rotated' : ''}`} />
+      </button>
+      {open && (
+        <div className="custom-dropdown-menu" role="listbox">
+          {options.map(opt => (
+            <button
+              key={String(opt.value)}
+              type="button"
+              role="option"
+              aria-selected={opt.value === value}
+              className={`custom-dropdown-item ${opt.value === value ? 'selected' : ''}`}
+              onClick={() => {
+                onChange(opt.value)
+                setOpen(false)
+              }}
+            >
+              <span>{opt.label}</span>
+              {opt.value === value && <Check size={14} className="dropdown-check" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function MapGraphic({ locations, devices, onSelect }: { locations: Location[]; devices: Device[]; onSelect: (id: number) => void }) {
+  const spots = [
+    { x: 40, y: 38 }, { x: 70, y: 58 }, { x: 28, y: 70 }, { x: 63, y: 27 },
+    { x: 18, y: 32 }, { x: 82, y: 31 }, { x: 51, y: 73 }, { x: 77, y: 78 },
+    { x: 34, y: 21 }, { x: 55, y: 49 }, { x: 17, y: 55 }, { x: 88, y: 51 },
+  ]
+  return <div className="map-graphic">
+    <svg viewBox="0 0 500 290" preserveAspectRatio="none" aria-hidden="true">
+      <rect width="500" height="290" fill="var(--map-ground)" />
+      <path d="M0 35 C100 60 85 5 210 33 S390 75 500 25 M0 160 C120 136 144 210 245 150 S380 105 500 159 M40 290 C42 195 104 151 120 0 M290 290 C255 215 337 140 338 0 M470 290 C420 240 430 105 500 93" fill="none" stroke="var(--map-street)" strokeWidth="24" />
+      <path d="M0 35 C100 60 85 5 210 33 S390 75 500 25 M0 160 C120 136 144 210 245 150 S380 105 500 159 M40 290 C42 195 104 151 120 0 M290 290 C255 215 337 140 338 0 M470 290 C420 240 430 105 500 93" fill="none" stroke="var(--map-street-line)" strokeWidth="2" strokeDasharray="8 10" opacity=".8" />
+      <path d="M150 75 L225 66 L250 110 L190 135 Z M335 205 L413 192 L430 245 L363 261 Z M25 205 L95 198 L108 249 L22 266 Z" fill="var(--map-park)" opacity=".82" />
+      <path d="M162 189 L206 181 L215 211 L171 219 Z M395 70 L450 75 L438 113 L391 107 Z M263 46 L301 45 L307 72 L267 75 Z" fill="var(--map-block)" />
+    </svg>
+    <div className="map-label map-label-one">POBLACION</div><div className="map-label map-label-two">BANCOD</div>
+    {locations.map((location, index) => <button key={location.id} className={`map-pin ${devices.some(d => d.location.id === location.id && d.status === 'online') ? 'is-online' : 'is-offline'}`} style={{ left: `${spots[index % spots.length].x}%`, top: `${spots[index % spots.length].y}%` }} title={location.name} onClick={() => onSelect(location.id)}><Camera size={15} /></button>)}
+    <span className="map-caption">Indang, Cavite · Approximate monitoring zones</span>
+  </div>
+}
+
 function DetectionList({ rows, onOpen, onDelete, compact = false, emptyMessage }: { rows: Detection[]; onOpen: (row: Detection) => void; onDelete: (row: Detection) => void; compact?: boolean; emptyMessage?: string }) {
   return <div className={`detection-list ${compact ? 'compact' : ''}`}>
     {rows.length === 0 ? <div className="empty-state"><Camera size={26} /><strong>No detections to show</strong><span>{emptyMessage || 'A snapshot, count, and time will appear here after the first event. Check filters if records already exist.'}</span></div> : rows.map(row => <div className="detection-entry" key={row.id}>
       <button className="detection-row" onClick={() => onOpen(row)}>
         <div className="capture-thumb">{row.snapshot_path ? <img src={api.snapshot(row.snapshot_path)} alt={`CCTV snapshot from ${row.location.name}`} /> : <Camera size={22} />}</div>
-        <div className="detection-main"><strong>{detectionHeading(row)}{row.source === 'camera' && row.dog_count > 0 ? ` · ${dogStatus(row)}` : ''}</strong><span><MapPin size={13} /> {row.location.name} <i /> {row.device_id}{row.source === 'camera' ? ` · ${row.event_state === 'active' ? 'Active' : 'Closed'} event · ${row.person_count} ${row.person_count === 1 ? 'person' : 'people'}` : ''}</span></div>
+        <div className="detection-main"><strong>{detectionHeading(row)}{row.source === 'camera' && row.dog_count > 0 ? <span className={`dog-status-badge badge-${dogStatus(row).toLowerCase()}`}>{dogStatus(row)}</span> : ''}</strong><span><MapPin size={13} /> {row.location.name} <i /> {row.device_id}{row.source === 'camera' ? ` · ${row.event_state === 'active' ? 'Active' : 'Closed'} event · ${row.person_count} ${row.person_count === 1 ? 'person' : 'people'}` : ''}</span></div>
         <div className="detection-time"><strong>{timeOnly(row.timestamp)}</strong><span>{dateOnly(row.timestamp)}</span></div>
         <StatusPill status={row.review_status} />
         <span className="row-action-space" />
@@ -67,13 +161,92 @@ function DetectionList({ rows, onOpen, onDelete, compact = false, emptyMessage }
   </div>
 }
 
-function EmptyOverview({ device, onCameras }: { device: Device | undefined; onCameras: () => void }) {
-  return <>
-    <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> GETTING STARTED</div><h1>Your monitoring workspace</h1><p>No detections have been recorded yet. Start with the single example camera below.</p></div></div>
-    <section className="start-hero card"><div className="start-copy"><span className="start-step">START HERE · 1 EXAMPLE CAMERA</span><h2>See what happens after<br />a camera detects a dog.</h2><p>Choose <strong>Simulate a scenario</strong> in the header to create one snapshot. Its dog count, time, and monitoring zone will appear here for review.</p><div className="start-actions"><button className="outline-button" onClick={onCameras}><Camera size={17} /> View camera</button></div><small>Scenarios create still snapshots. There is no live video feed.</small></div><div className="example-camera"><div className="example-camera-top"><span>EXAMPLE CAMERA</span><span className="example-id">{device?.id || 'CAM-001'}</span></div><div className="example-camera-frame"><Camera size={42} strokeWidth={1.5} /><span>No capture yet</span></div><div className="example-camera-bottom"><div><strong>{device?.name || 'Example camera'}</strong><span><MapPin size={13} /> {device?.location.name || 'No location registered'}</span></div><StatusPill status={device?.status || 'offline'} /></div></div></section>
-    <div className="start-metrics"><div><strong>0</strong><span>Dogs detected</span></div><div><strong>0</strong><span>Snapshots received</span></div><div><strong>0</strong><span>Events to review</span></div></div>
-    <section className="workflow-card card"><div className="card-header"><div><span className="section-kicker">HOW IT WORKS</span><h3>From camera to dashboard</h3><p>A scenario follows the same record flow as a future camera event.</p></div></div><div className="workflow-steps"><div><span className="workflow-icon"><Camera size={20} /></span><em>01</em><strong>Choose a camera</strong><p>Select its monitoring zone and dog count.</p></div><ArrowRight className="workflow-arrow" size={18} /><div><span className="workflow-icon"><Activity size={20} /></span><em>02</em><strong>Create a snapshot</strong><p>One still image and timestamp are generated.</p></div><ArrowRight className="workflow-arrow" size={18} /><div><span className="workflow-icon"><ShieldCheck size={20} /></span><em>03</em><strong>Save the record</strong><p>The count and image are stored together.</p></div><ArrowRight className="workflow-arrow" size={18} /><div><span className="workflow-icon"><LayoutDashboard size={20} /></span><em>04</em><strong>Review here</strong><p>Inspect and mark the event reviewed.</p></div></div></section>
-  </>
+const HERO_IMAGES = [
+  '/hero-dogs/dog-1.jpg',
+  '/hero-dogs/dog-2.jpg',
+  '/hero-dogs/dog-3.jpg',
+  '/hero-dogs/dog-4.jpg',
+  '/hero-dogs/dog-5.jpg',
+]
+
+function EmptyOverview({ onCameras, nowLabel }: { onCameras: () => void; nowLabel: string }) {
+  const [currentSlide, setCurrentSlide] = useState(0)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCurrentSlide(prev => (prev + 1) % HERO_IMAGES.length)
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [])
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow"><span className="eyebrow-line" /> WELCOME TO BANTAYASO</div>
+          <h1>Welcome, Operator</h1>
+          <p>Your municipal monitoring workspace is active and ready to track community areas.</p>
+        </div>
+        <div className="heading-actions">
+          <span className="date-chip"><CalendarDays size={16} />{nowLabel}</span>
+        </div>
+      </div>
+
+      <section className="start-hero card start-hero-slideshow">
+        <div className="hero-bg-carousel" aria-hidden="true">
+          {HERO_IMAGES.map((src, idx) => (
+            <div
+              key={src}
+              className={`hero-bg-slide ${idx === currentSlide ? 'active' : ''}`}
+              style={{ backgroundImage: `url(${src})` }}
+            />
+          ))}
+          <div className="hero-bg-overlay" />
+        </div>
+
+        <div className="start-copy">
+          <h2>See what happens after<br />a camera detects a dog.</h2>
+          <p>Choose <strong>Simulate a scenario</strong> in the header to create a test snapshot. Its dog count, timestamp, and monitoring zone will appear here for review.</p>
+          <div className="start-actions">
+            <button className="outline-button" onClick={onCameras}><Camera size={17} /> View cameras</button>
+          </div>
+          <small>Continuous municipal monitoring active · Detections will automatically record</small>
+        </div>
+
+        <div className="hero-slide-indicators" aria-label="Background image indicators">
+          {HERO_IMAGES.map((_, idx) => (
+            <button
+              key={idx}
+              type="button"
+              className={`hero-slide-dot ${idx === currentSlide ? 'active' : ''}`}
+              onClick={() => setCurrentSlide(idx)}
+              title={`View slide ${idx + 1}`}
+              aria-label={`View photo ${idx + 1}`}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="workflow-card card">
+        <div className="card-header">
+          <div>
+            <span className="section-kicker">HOW IT WORKS</span>
+            <h3>From camera to dashboard</h3>
+            <p>A scenario follows the same record flow as a future camera event.</p>
+          </div>
+        </div>
+        <div className="workflow-steps">
+          <div><span className="workflow-icon"><Camera size={20} /></span><em>01</em><strong>Choose a camera</strong><p>Select its monitoring zone and dog count.</p></div>
+          <ArrowRight className="workflow-arrow" size={18} />
+          <div><span className="workflow-icon"><Activity size={20} /></span><em>02</em><strong>Create a snapshot</strong><p>One still image and timestamp are generated.</p></div>
+          <ArrowRight className="workflow-arrow" size={18} />
+          <div><span className="workflow-icon"><ShieldCheck size={20} /></span><em>03</em><strong>Save the record</strong><p>The count and image are stored together.</p></div>
+          <ArrowRight className="workflow-arrow" size={18} />
+          <div><span className="workflow-icon"><LayoutDashboard size={20} /></span><em>04</em><strong>Review here</strong><p>Inspect and mark the event reviewed.</p></div>
+        </div>
+      </section>
+    </>
+  )
 }
 
 function EmptyAnalytics() {
@@ -300,66 +473,85 @@ export default function App() {
   return <div className="app-shell">
     {mobileOpen && <button className="sidebar-scrim" aria-label="Close menu" onClick={() => setMobileOpen(false)} />}
     <aside className={`sidebar ${sidebarExpanded ? 'expanded' : ''} ${mobileOpen ? 'mobile-open' : ''}`} onClick={event => {
-      if (window.matchMedia('(max-width: 760px)').matches) return
+      if (window.matchMedia('(max-width: 1024px)').matches) return
       // Nav buttons (and the gaps between them) navigate only; every other part of the sidebar toggles it.
       if ((event.target as Element).closest('.nav-list')) return
       setSidebarExpanded(value => !value)
     }}>
-      <button className="brand" type="button" title={mobileOpen ? 'Close menu' : sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'} aria-label={mobileOpen ? 'Close menu' : sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'} aria-expanded={mobileOpen || sidebarExpanded} onClick={() => { if (window.matchMedia('(max-width: 760px)').matches) setMobileOpen(false) }}><span className="brand-icon"><Dog size={25} strokeWidth={2.5} /></span><span className="brand-name"><strong>BantayAso<span>.</span></strong><small>DOG MONITORING SYSTEM</small></span></button>
-      <div className="workspace-tag" title="All monitoring areas"><span className="workspace-logo">BA</span><span><strong>Monitoring workspace</strong><small>All registered zones</small></span></div>
+      <div className="brand-header-row">
+        <button className="brand" type="button" title={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'} aria-label={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'} aria-expanded={sidebarExpanded}>
+          <span className="brand-icon"><img src="/bantayaso-logo.png" alt="BantayAso" className="brand-logo-img" /></span>
+          <span className="brand-name"><strong>BantayAso<span>.</span></strong></span>
+        </button>
+        {mobileOpen && (
+          <button className="sidebar-close-btn" type="button" aria-label="Close menu" onClick={() => setMobileOpen(false)}>
+            <X size={18} />
+          </button>
+        )}
+      </div>
       <div className="nav-section-label">WORKSPACE</div>
-      <nav className="nav-list" aria-label="Main navigation">{navigation.slice(0, 4).map(item => <button key={item.id} title={item.label} aria-label={item.label} aria-current={page === item.id ? 'page' : undefined} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => selectPage(item.id)}><item.icon size={19} strokeWidth={2} /><span>{item.label}</span>{item.id === 'detections' && unreadCount > 0 && <em>{unreadCount}</em>}</button>)}</nav>
+      <nav className="nav-list" aria-label="Main navigation">{navigation.slice(0, 4).map(item => <button key={item.id} title={item.label} aria-label={item.label} aria-current={page === item.id ? 'page' : undefined} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => { selectPage(item.id); setMobileOpen(false) }}><item.icon size={19} strokeWidth={2} /><span>{item.label}</span>{item.id === 'detections' && unreadCount > 0 && <em>{unreadCount}</em>}</button>)}</nav>
       <div className="nav-section-label nav-section-second">SYSTEM</div>
-      <nav className="nav-list"><button title="Settings" aria-label="Settings" aria-current={page === 'settings' ? 'page' : undefined} className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => selectPage('settings')}><Settings2 size={19} /><span>Settings</span></button></nav>
-      <div className="sidebar-spacer" />
-      <div className="sidebar-profile" title="LGU Operator"><span className="profile-avatar">LG</span><span><strong>LGU Operator</strong><small>Administrator</small></span></div>
+      <nav className="nav-list"><button title="Settings" aria-label="Settings" aria-current={page === 'settings' ? 'page' : undefined} className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => { selectPage('settings'); setMobileOpen(false) }}><Settings2 size={19} /><span>Settings</span></button></nav>
     </aside>
 
     <main className="main-panel">
-      <header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Menu size={21} /></button><span className="breadcrumb-root">Workspace</span><ChevronRight size={16} /><strong>{navigation.find(item => item.id === page)?.label}</strong></div><div className="topbar-actions"><div className={'live-indicator ' + (error ? 'offline' : '')}><span /> {error ? 'Service offline' : 'Service connected'}</div><button className="primary-button scenario-trigger" aria-label="Simulate a scenario" disabled={working || devices.length === 0 || !!error} onClick={() => { setScenarioDevice(devices[0]?.id || ''); setScenarioOpen(true) }}><Plus size={16} /><span>Simulate a scenario</span></button><button className="icon-button" title="Toggle dark mode" aria-label="Toggle dark mode" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={19} /> : <Sun size={19} />}</button><div className="notification-wrap" ref={notificationRef}>
-          <button type="button" className="icon-button notification-button" title="Notifications" aria-label={`Notifications, ${unreadCount} unread`} aria-expanded={notificationOpen} aria-controls="notification-panel" onClick={() => setNotificationOpen(open => !open)}>
-            <Bell size={19} />{unreadCount > 0 && <span className="notification-count">{unreadCount > 99 ? '99+' : unreadCount}</span>}
-          </button>
-          {notificationOpen && <section id="notification-panel" className="notification-panel" aria-labelledby="notification-title">
-            <div className="notification-header"><div><h2 id="notification-title">Notifications</h2><p>{unreadCount} unread | {notifications.length} notices</p></div><button type="button" onClick={() => markNotificationsRead(notifications.map(row => row.id))} disabled={unreadCount === 0}>Mark all read</button></div>
-            <div className="notification-list">{notifications.length === 0
-              ? <div className="notification-empty"><Bell size={23} /><strong>You're all caught up</strong><span>New detections will appear here.</span></div>
-              : notifications.slice(0, 6).map(row => <div key={row.id} className={`notification-item ${!readNotificationIds.has(row.id) ? 'unread' : ''}`}>
-                  <button type="button" className="notification-open" onClick={() => openNotification(row)} aria-label={`Open ${detectionHeading(row)} at ${row.location.name}`}>
-                    <span className="notification-thumb">{row.snapshot_path ? <img src={api.snapshot(row.snapshot_path)} alt="" /> : <Camera size={20} />}</span>
-                    <span className="notification-copy"><strong>{detectionHeading(row)}</strong><small>{row.device.name} | {row.location.name}</small><time dateTime={row.timestamp}>{dateTime(row.timestamp)}</time></span>
-                    {!readNotificationIds.has(row.id) && <span className="notification-new">New</span>}
-                  </button>
-                  <button type="button" className="notification-dismiss" title="Dismiss notification" aria-label={`Dismiss notification for ${detectionHeading(row)} at ${row.location.name}`} onClick={() => dismissNotifications([row.id])}><X size={16} /></button>
-                </div>)}
-            </div>
-            <div className="notification-footer"><span>{notifications.length > 6 ? `Showing latest 6 of ${notifications.length}` : `${notifications.length} shown`}</span><div><button type="button" onClick={() => dismissNotifications(notifications.map(row => row.id))} disabled={notifications.length === 0}>Clear all</button><button type="button" onClick={() => { selectPage('detections'); setStatusFilter('pending') }}>View all</button></div></div>
-            <p className="notification-note">Clearing hides notices in this browser; detection records remain available for review.</p>
-          </section>}
-        </div><span className="top-avatar">LG</span></div></header>
+      <header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu" aria-label={mobileOpen ? 'Close menu' : 'Toggle navigation menu'} title={mobileOpen ? 'Close menu' : 'Toggle navigation menu'} onClick={() => { if (window.matchMedia('(max-width: 1024px)').matches) { setMobileOpen(open => !open) } else { setSidebarExpanded(exp => !exp) } }}>{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><span className="breadcrumb-root">Workspace</span><ChevronRight size={16} /><strong>{navigation.find(item => item.id === page)?.label}</strong></div><div className="topbar-actions"><div className={'live-indicator ' + (error ? 'offline' : '')}><span /> {error ? 'Service offline' : 'Service connected'}</div><button className="primary-button scenario-trigger" aria-label="Simulate a scenario" disabled={working || devices.length === 0 || !!error} onClick={() => { setScenarioDevice(devices[0]?.id || ''); setScenarioOpen(true) }}><Plus size={16} /><span>Simulate a scenario</span></button><button className="icon-button" title="Toggle dark mode" aria-label="Toggle dark mode" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={19} /> : <Sun size={19} />}</button><div className="notification-wrap" ref={notificationRef}>
+        <button type="button" className="icon-button notification-button" title="Notifications" aria-label={`Notifications, ${unreadCount} unread`} aria-expanded={notificationOpen} aria-controls="notification-panel" onClick={() => setNotificationOpen(open => !open)}>
+          <Bell size={19} />{unreadCount > 0 && <span className="notification-count">{unreadCount > 99 ? '99+' : unreadCount}</span>}
+        </button>
+        {notificationOpen && <section id="notification-panel" className="notification-panel" aria-labelledby="notification-title">
+          <div className="notification-header"><div><h2 id="notification-title">Notifications</h2><p>{unreadCount} unread | {notifications.length} notices</p></div><button type="button" onClick={() => markNotificationsRead(notifications.map(row => row.id))} disabled={unreadCount === 0}>Mark all read</button></div>
+          <div className="notification-list">{notifications.length === 0
+            ? <div className="notification-empty"><Bell size={23} /><strong>You're all caught up</strong><span>New detections will appear here.</span></div>
+            : notifications.slice(0, 6).map(row => <div key={row.id} className={`notification-item ${!readNotificationIds.has(row.id) ? 'unread' : ''}`}>
+              <button type="button" className="notification-open" onClick={() => openNotification(row)} aria-label={`Open ${detectionHeading(row)} at ${row.location.name}`}>
+                <span className="notification-thumb">{row.snapshot_path ? <img src={api.snapshot(row.snapshot_path)} alt="" /> : <Camera size={20} />}</span>
+                <span className="notification-copy"><strong>{detectionHeading(row)}</strong><small>{row.device.name} | {row.location.name}</small><time dateTime={row.timestamp}>{dateTime(row.timestamp)}</time></span>
+                {!readNotificationIds.has(row.id) && <span className="notification-new">New</span>}
+              </button>
+              <button type="button" className="notification-dismiss" title="Dismiss notification" aria-label={`Dismiss notification for ${detectionHeading(row)} at ${row.location.name}`} onClick={() => dismissNotifications([row.id])}><X size={16} /></button>
+            </div>)}
+          </div>
+          <div className="notification-footer"><span>{notifications.length > 6 ? `Showing latest 6 of ${notifications.length}` : `${notifications.length} shown`}</span><div><button type="button" onClick={() => dismissNotifications(notifications.map(row => row.id))} disabled={notifications.length === 0}>Clear all</button><button type="button" onClick={() => { selectPage('detections'); setStatusFilter('pending') }}>View all</button></div></div>
+          <p className="notification-note">Clearing hides notices in this browser; detection records remain available for review.</p>
+        </section>}
+      </div></div></header>
 
       <div className="content">
         {error && <div className="error-banner"><WifiOff size={18} /><span>{error}</span><button onClick={() => void refresh()}>Retry</button></div>}
         {loading && !summary ? <div className="loading-state"><RefreshCw className="spin" size={28} /><strong>Loading monitoring data…</strong></div> : <>
-          {page === 'overview' && detections.length === 0 && <EmptyOverview device={devices[0]} onCameras={() => selectPage('cameras')} />}
+          {page === 'overview' && detections.length === 0 && <EmptyOverview onCameras={() => selectPage('cameras')} nowLabel={nowLabel} />}
           {page === 'overview' && detections.length > 0 && <>
-            <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> DETECTION OVERVIEW</div><h1>Good day, Operator <span className="heading-wave">✳</span></h1><p>Here's what's happening across your monitored areas today.</p></div><div className="heading-actions"><span className="date-chip"><CalendarDays size={16} />{nowLabel}</span></div></div>
-            <div className="hero-card"><div className="hero-content"><div className="hero-badge"><Radio size={14} /> DETECTION RECORDS</div><h2>Keeping our streets<br />safer, one event<br />at a time.</h2><p>Review incoming detection records, snapshots, and locations in one place.</p><button onClick={() => selectPage('detections')}>Explore detections <ArrowRight size={16} /></button></div><div className="hero-art" aria-hidden="true"><div className="hero-orbit orbit-1" /><div className="hero-orbit orbit-2" /><div className="hero-orbit orbit-3" /><div className="hero-center"><Dog size={73} strokeWidth={1.3} /></div><span className="orbit-dot dot-1" /><span className="orbit-dot dot-2" /><span className="orbit-dot dot-3" /><div className="hero-floating"><span><Activity size={17} /></span><div><strong>{summary?.dogs_today || 0} dogs</strong><small>Spotted today</small></div></div></div></div>
-            <div className="stats-grid"><div className="stat-card"><div className="stat-top"><span className="stat-icon green"><Dog size={21} /></span><span className="stat-trend"><ArrowRight size={13} /> Today</span></div><strong>{summary?.dogs_today || 0}</strong><span>Dog counts today</span><small>Across recorded detection events</small></div><div className="stat-card"><div className="stat-top"><span className="stat-icon blue"><Camera size={20} /></span><span className="stat-trend positive"><span className="tiny-dot" /> Monitoring</span></div><strong>{summary?.active_cameras || 0}<em> / {summary?.total_cameras || 0}</em></strong><span>Active CCTV cameras</span><small>Devices connected to the network</small></div><div className="stat-card"><div className="stat-top"><span className="stat-icon amber"><ShieldCheck size={21} /></span><span className="stat-trend"><Clock3 size={13} /> Action needed</span></div><strong>{summary?.pending_reviews || 0}</strong><span>Pending reviews</span><small>Detections awaiting verification</small></div><div className="stat-card"><div className="stat-top"><span className="stat-icon purple"><MapPin size={21} /></span><span className="stat-trend">All areas</span></div><strong>{summary?.locations_monitored || 0}</strong><span>Monitoring zones</span><small>Locations under observation</small></div></div>
-            <div className="dashboard-grid overview-chart-only"><section className="card activity-card"><div className="card-header"><div><span className="section-kicker">ACTIVITY INSIGHTS</span><h3>Detection activity</h3><p>Peak dog counts across events over the last 7 days</p></div><span className="period-chip"><CalendarDays size={15} /> Last 7 days</span></div><div className="chart-total"><strong>{analytics?.daily.reduce((total, day) => total + day.dogs, 0) || 0}</strong><span>dogs this week</span></div><div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={analytics?.daily || []} margin={{ top: 10, right: 8, left: -30, bottom: 0 }}><defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#43ad79" stopOpacity={0.23} /><stop offset="100%" stopColor="#43ad79" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="date" tickFormatter={weekday} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} dy={12} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} /><Tooltip contentStyle={{ border: '1px solid var(--border)', borderRadius: 12, background: 'var(--card)', color: 'var(--text)' }} labelFormatter={value => dateOnly(String(value))} /><Area type="monotone" dataKey="dogs" stroke="#1f9d6c" strokeWidth={3} fill="url(#chartFill)" activeDot={{ r: 6, fill: '#13865d', stroke: '#fff', strokeWidth: 3 }} /></AreaChart></ResponsiveContainer></div></section></div>
+            <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> DETECTION OVERVIEW</div><h1>Good day, Operator</h1><p>Here's what's happening across your monitored areas today.</p></div><div className="heading-actions"><span className="date-chip"><CalendarDays size={16} />{nowLabel}</span></div></div>
+            <div className="hero-card"><div className="hero-content"><div className="hero-badge"><span className="hero-badge-dot" /> DETECTION RECORDS</div><h2>Keeping our streets<br />safer, one event<br />at a time.</h2><p>Review incoming detection records, snapshots, and locations in one place.</p><button onClick={() => selectPage('detections')}>Explore detections <ArrowRight size={16} /></button></div><div className="hero-art" aria-hidden="true"><div className="hero-radar-sweep" /><div className="hero-orbit orbit-1" /><div className="hero-orbit orbit-2" /><div className="hero-orbit orbit-3" /><div className="hero-center"><img src="/bantayaso-logo.png" alt="BantayAso Mascot" className="hero-mascot-img" /></div><span className="orbit-dot dot-1" /><span className="orbit-dot dot-2" /><span className="orbit-dot dot-3" /><span className="orbit-dot dot-4" /><div className="hero-floating-pill"><span className="hero-pill-icon"><PawPrint size={13} /></span><span><strong>{summary?.dogs_today || 0} {summary?.dogs_today === 1 ? 'dog' : 'dogs'}</strong> detected today</span></div></div></div>
+            <div className="stats-grid"><div className="stat-card stat-card-green"><div className="stat-top"><span className="stat-trend">Today</span></div><strong>{summary?.dogs_today || 0}</strong><span>Dog counts today</span><small>Across recorded detection events</small></div><div className="stat-card stat-card-blue"><div className="stat-top"><span className="stat-trend">Monitoring</span></div><strong>{summary?.active_cameras || 0}<em> / {summary?.total_cameras || 0}</em></strong><span>Active CCTV cameras</span><small>Devices connected to the network</small></div><div className="stat-card stat-card-amber"><div className="stat-top"><span className="stat-trend">Action needed</span></div><strong>{summary?.pending_reviews || 0}</strong><span>Pending reviews</span><small>Detections awaiting verification</small></div><div className="stat-card stat-card-purple"><div className="stat-top"><span className="stat-trend">All areas</span></div><strong>{summary?.locations_monitored || 0}</strong><span>Monitoring zones</span><small>Locations under observation</small></div></div>
+            <section className="card activity-card activity-card-full"><div className="card-header"><div><span className="section-kicker">ACTIVITY INSIGHTS</span><h3>Detection activity</h3><p>Peak dog counts across events over the last 7 days</p></div><span className="period-chip"><CalendarDays size={15} /> Last 7 days</span></div><div className="chart-total"><strong>{analytics?.daily.reduce((total, day) => total + day.dogs, 0) || 0}</strong><span>dogs this week</span></div><div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={analytics?.daily || []} margin={{ top: 10, right: 8, left: -30, bottom: 0 }}><defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10b981" stopOpacity={0.4} /><stop offset="100%" stopColor="#10b981" stopOpacity={0.0} /></linearGradient></defs><CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="date" tickFormatter={weekday} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} dy={12} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} /><Tooltip contentStyle={{ border: '1px solid var(--border)', borderRadius: 12, background: 'var(--card)', color: 'var(--text)' }} labelFormatter={value => dateOnly(String(value))} /><Area type="monotone" dataKey="dogs" stroke="#10b981" strokeWidth={3} fill="url(#chartFill)" activeDot={{ r: 6, fill: '#10b981', stroke: '#fff', strokeWidth: 2 }} /></AreaChart></ResponsiveContainer></div></section>
             <section className="card recent-card"><div className="card-header"><div><span className="section-kicker">RECENT EVENTS</span><h3>Latest detections</h3><p>Snapshots and counts from every monitoring zone</p></div><button className="text-button" onClick={() => selectPage('detections')}>View all detections <ArrowRight size={16} /></button></div><DetectionList rows={detections.slice(0, 4)} onOpen={openDetection} onDelete={setDeleteTarget} compact /></section>
           </>}
 
-          {page === 'detections' && <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> DETECTION RECORDS</div><h1>{filteredDevice ? `Detections from ${filteredDevice.name}` : "Detection history"}</h1><p>{filteredDevice ? `Showing records from ${filteredDevice.id} at ${filteredDevice.location.name}.` : "Review camera activity from every monitoring zone."}</p></div><div className="heading-actions">{deviceFilter !== "all" && <button className="outline-button" onClick={() => { setDeviceFilter("all"); setLocationFilter("all") }}><ArrowRight size={16} /> All detections</button>}{deviceFilter === "all" && <button className="danger-button" title="Delete all detections" onClick={() => setDeleteTarget('all')} disabled={working || detections.length === 0}><Trash2 size={17} /> Delete all</button>}<button className="outline-button" onClick={exportCsv}><ArrowDownToLine size={17} /> Export CSV</button></div></div><div className="records-summary"><div><span>Shown detections</span><strong>{filtered.length}</strong></div><div><span>Awaiting review</span><strong>{filtered.filter(row => row.review_status === "pending").length}</strong></div><div><span>Dog counts across events</span><strong>{filtered.reduce((sum, row) => sum + row.dog_count, 0)}</strong></div></div><section className="card records-card"><div className="filter-bar"><label className="search-field"><Search size={18} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search detection, camera or location" /></label><label className="select-field"><SlidersHorizontal size={17} /><select aria-label="Filter by status" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="all">All statuses</option><option value="pending">Pending</option><option value="reviewed">Reviewed</option><option value="flagged">Flagged</option></select><ChevronDown size={15} /></label><label className="select-field"><MapPin size={17} /><select aria-label="Filter by location" value={filteredDevice ? filteredDevice.location.id : locationFilter} disabled={!!filteredDevice} onChange={event => setLocationFilter(event.target.value === 'all' ? 'all' : Number(event.target.value))}><option value="all">All locations</option>{locations.map(location => <option key={location.id} value={location.id}>{location.name}</option>)}</select>{!filteredDevice && <ChevronDown size={15} />}</label></div><div className="table-labels"><span>CAPTURE / EVENT</span><span>TIME RECORDED</span><span>REVIEW STATUS</span></div><DetectionList rows={filtered} onOpen={openDetection} onDelete={setDeleteTarget} emptyMessage={filteredDevice ? `No detections have been recorded for ${filteredDevice.name} yet.` : undefined} /><div className="records-footer">Showing {filtered.length} of {detections.length} detections <span>Updates automatically every 15 seconds</span></div></section></>}
+          {page === 'detections' && <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> DETECTION RECORDS</div><h1>{filteredDevice ? `Detections from ${filteredDevice.name}` : "Detection history"}</h1><p>{filteredDevice ? `Showing records from ${filteredDevice.id} at ${filteredDevice.location.name}.` : "Review camera activity from every monitoring zone."}</p></div><div className="heading-actions">{deviceFilter !== "all" && <button className="outline-button" onClick={() => { setDeviceFilter("all"); setLocationFilter("all") }}><ArrowRight size={16} /> All detections</button>}{deviceFilter === "all" && <button className="danger-button" title="Delete all detections" onClick={() => setDeleteTarget('all')} disabled={working || detections.length === 0}><Trash2 size={17} /> Delete all</button>}<button className="outline-button" onClick={exportCsv}><ArrowDownToLine size={17} /> Export CSV</button></div></div><div className="records-summary"><div><span>Shown detections</span><strong>{filtered.length}</strong></div><div><span>Awaiting review</span><strong>{filtered.filter(row => row.review_status === "pending").length}</strong></div><div><span>Dog counts across events</span><strong>{filtered.reduce((sum, row) => sum + row.dog_count, 0)}</strong></div></div><section className="card records-card"><div className="filter-bar"><label className="search-field"><Search size={18} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search detection, camera or location" /></label><CustomDropdown icon={SlidersHorizontal} ariaLabel="Filter by status" value={statusFilter} options={[{ value: 'all', label: 'All statuses' }, { value: 'pending', label: 'Pending' }, { value: 'reviewed', label: 'Reviewed' }, { value: 'flagged', label: 'Flagged' }]} onChange={val => setStatusFilter(val)} /><CustomDropdown icon={MapPin} ariaLabel="Filter by location" value={filteredDevice ? filteredDevice.location.id : locationFilter} disabled={!!filteredDevice} options={[{ value: 'all', label: 'All locations' }, ...locations.map(loc => ({ value: loc.id, label: loc.name }))]} onChange={val => setLocationFilter(val === 'all' ? 'all' : Number(val))} /></div><div className="table-labels"><span className="table-label-thumb" /><span>CAPTURE / EVENT</span><span>TIME RECORDED</span><span>REVIEW STATUS</span><span className="table-label-action" /></div><DetectionList rows={filtered} onOpen={openDetection} onDelete={setDeleteTarget} emptyMessage={filteredDevice ? `No detections have been recorded for ${filteredDevice.name} yet.` : undefined} /><div className="records-footer">Showing {filtered.length} of {detections.length} detections <span>Updates automatically every 15 seconds</span></div></section></>}
 
-          {page === 'cameras' && (selectedCamera ? <CameraDetail device={selectedCamera} rows={selectedCameraRows} onBack={() => setSelectedCameraId(null)} onViewHistory={() => openCameraDetections(selectedCamera)} onOpen={openDetection} onDelete={setDeleteTarget} /> : <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> DEVICE NETWORK</div><h1>CCTV cameras</h1><p>Select a camera to view its detections and snapshots.</p></div><button className="primary-button" onClick={() => setAddOpen(true)}><Plus size={17} /> Add camera</button></div><div className="camera-summary"><div><Wifi size={20} /><strong>{summary?.active_cameras || 0} online</strong><span>camera connections</span></div><div><WifiOff size={20} /><strong>{(summary?.total_cameras || 0) - (summary?.active_cameras || 0)} offline</strong><span>not connected</span></div><div><MapPin size={20} /><strong>{locations.length} zones</strong><span>under observation</span></div></div><div className="camera-grid">{devices.map(device => { const latest = detections.find(row => row.device_id === device.id && row.snapshot_path); return <article className="camera-card card" key={device.id} role="button" tabIndex={0} aria-label={`Open camera ${device.name}`} onClick={() => openCameraDetails(device)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openCameraDetails(device) } }}><div className="camera-preview">{latest?.snapshot_path ? <img src={api.snapshot(latest.snapshot_path)} alt={`Latest snapshot at ${device.location.name}`} /> : <div className="camera-no-preview"><Camera size={32} /><span>No captures yet</span></div>}<span className="camera-preview-label"><Radio size={13} /> {latest ? 'LATEST SNAPSHOT' : 'AWAITING CAPTURE'}</span></div><div className="camera-info"><div><span className="camera-id">{device.id}</span><StatusPill status={device.status} /></div><h3>{device.name}</h3><p><MapPin size={15} /> {device.location.name}, {device.location.barangay}</p><div className="camera-meta"><span><Clock3 size={14} /> {device.last_seen ? `Last signal ${dateTime(device.last_seen)}` : 'No signal yet'}</span><span><Eye size={14} /> {detections.filter(row => row.device_id === device.id).length} events</span><span className="camera-open-hint">Open camera <ArrowRight size={14} /></span></div></div></article> })}</div></>)}
+          {page === 'cameras' && (selectedCamera ? <CameraDetail device={selectedCamera} rows={selectedCameraRows} onBack={() => setSelectedCameraId(null)} onViewHistory={() => openCameraDetections(selectedCamera)} onOpen={openDetection} onDelete={setDeleteTarget} /> : <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> DEVICE NETWORK</div><h1>CCTV cameras</h1><p>Select a camera to view its detections and snapshots.</p></div><button className="primary-button" onClick={() => setAddOpen(true)}><Plus size={17} /> Add camera</button></div><div className="camera-summary"><div><strong>{summary?.active_cameras || 0} online</strong><span>camera connections</span></div><div><strong>{(summary?.total_cameras || 0) - (summary?.active_cameras || 0)} offline</strong><span>not connected</span></div><div><strong>{locations.length} zones</strong><span>under observation</span></div></div><div className="camera-grid">{devices.map(device => { const latest = detections.find(row => row.device_id === device.id && row.snapshot_path); return <article className="camera-card card" key={device.id} role="button" tabIndex={0} aria-label={`Open camera ${device.name}`} onClick={() => openCameraDetails(device)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openCameraDetails(device) } }}><div className="camera-preview">{latest?.snapshot_path ? <img src={api.snapshot(latest.snapshot_path)} alt={`Latest snapshot at ${device.location.name}`} /> : <div className="camera-no-preview"><Camera size={32} /><span>No captures yet</span></div>}<span className="camera-preview-label"><Radio size={13} /> {latest ? 'LATEST SNAPSHOT' : 'AWAITING CAPTURE'}</span></div><div className="camera-info"><div><span className="camera-id">{device.id}</span><StatusPill status={device.status} /></div><h3>{device.name}</h3><p><MapPin size={15} /> {device.location.name}, {device.location.barangay}</p><div className="camera-meta"><span><Clock3 size={14} /> {device.last_seen ? `Last signal ${dateTime(device.last_seen)}` : 'No signal yet'}</span><span><Eye size={14} /> {detections.filter(row => row.device_id === device.id).length} events</span><span className="camera-open-hint">Open camera <ArrowRight size={14} /></span></div></div></article> })}</div></>)}
 
           {page === 'analytics' && detections.length === 0 && <EmptyAnalytics />}
-          {page === 'analytics' && detections.length > 0 && <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> MONITORING INSIGHTS</div><h1>Activity analytics</h1><p>See how dog activity changes across places and time.</p></div><button className="outline-button" onClick={exportCsv}><ArrowDownToLine size={17} /> Export records</button></div><div className="analytics-top"><div className="analytics-highlight card"><span className="section-kicker">DOG COUNTS ACROSS EVENTS</span><strong>{detections.reduce((sum, row) => sum + row.dog_count, 0)}</strong><p>Across {summary?.total_detections || 0} recorded events</p><Dog size={75} /></div><div className="analytics-highlight card"><span className="section-kicker">AVERAGE CONFIDENCE</span><strong>{detections.length ? Math.round(detections.reduce((sum, row) => sum + row.confidence, 0) / detections.length * 100) : 0}%</strong><p>Reported confidence across recorded events</p><Activity size={75} /></div><div className="analytics-highlight card"><span className="section-kicker">REVIEWED EVENTS</span><strong>{detections.filter(row => row.review_status === 'reviewed').length}</strong><p>{summary?.pending_reviews || 0} records waiting for review</p><CheckCircle2 size={75} /></div></div><div className="dashboard-grid analytics-grid"><section className="card activity-card"><div className="card-header"><div><span className="section-kicker">WEEKLY TREND</span><h3>Dog counts by day</h3><p>Recorded count from all monitoring zones</p></div><span className="period-chip">Last 7 days</span></div><div className="chart-wrap analytics-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={analytics?.daily || []} margin={{ top: 12, right: 8, left: -30, bottom: 0 }}><CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="date" tickFormatter={weekday} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} dy={12} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} /><Tooltip contentStyle={{ border: '1px solid var(--border)', borderRadius: 12, background: 'var(--card)', color: 'var(--text)' }} /><Area type="monotone" dataKey="dogs" stroke="#1f9d6c" strokeWidth={3} fill="#1f9d6c" fillOpacity={.15} /></AreaChart></ResponsiveContainer></div></section><section className="card location-rank"><div className="card-header"><div><span className="section-kicker">LOCATION BREAKDOWN</span><h3>Activity by zone</h3><p>Total dogs recorded per location</p></div></div><div className="rank-list">{[...(analytics?.by_location || [])].sort((a, b) => b.count - a.count).map((item, index, all) => <div className="rank-row" key={item.location_id}><div><span className="rank-index">{String(index + 1).padStart(2, '0')}</span><strong>{item.name}</strong><span>{item.count} dogs</span></div><div className="rank-track"><span style={{ width: `${all[0].count ? (item.count / all[0].count) * 100 : 0}%` }} /></div></div>)}</div></section></div></>}
+          {page === 'analytics' && detections.length > 0 && <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> MONITORING INSIGHTS</div><h1>Activity analytics</h1><p>See how dog activity changes across places and time.</p></div><button className="outline-button" onClick={exportCsv}><ArrowDownToLine size={17} /> Export records</button></div><div className="analytics-top"><div className="analytics-highlight card stat-card-green"><div className="analytics-hl-top"><span className="section-kicker">DOG COUNTS ACROSS EVENTS</span></div><strong>{detections.reduce((sum, row) => sum + row.dog_count, 0)}</strong><p>Across {summary?.total_detections || 0} recorded events</p></div><div className="analytics-highlight card stat-card-blue"><div className="analytics-hl-top"><span className="section-kicker">AVERAGE CONFIDENCE</span></div><strong>{detections.length ? Math.round(detections.reduce((sum, row) => sum + row.confidence, 0) / detections.length * 100) : 0}%</strong><p>Reported confidence across recorded events</p></div><div className="analytics-highlight card stat-card-amber"><div className="analytics-hl-top"><span className="section-kicker">REVIEWED EVENTS</span></div><strong>{detections.filter(row => row.review_status === 'reviewed').length}</strong><p>{summary?.pending_reviews || 0} records waiting for review</p></div></div><div className="dashboard-grid analytics-grid"><section className="card activity-card"><div className="card-header"><div><span className="section-kicker">WEEKLY TREND</span><h3>Dog counts by day</h3><p>Recorded count from all monitoring zones</p></div><span className="period-chip">Last 7 days</span></div><div className="chart-wrap analytics-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={analytics?.daily || []} margin={{ top: 12, right: 8, left: -30, bottom: 0 }}><CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="date" tickFormatter={weekday} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} dy={12} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} /><Tooltip contentStyle={{ border: '1px solid var(--border)', borderRadius: 12, background: 'var(--card)', color: 'var(--text)' }} /><Area type="monotone" dataKey="dogs" stroke="#10b981" strokeWidth={3} fill="#10b981" fillOpacity={.18} /></AreaChart></ResponsiveContainer></div></section><section className="card location-rank"><div className="card-header"><div><span className="section-kicker">LOCATION BREAKDOWN</span><h3>Activity by zone</h3><p>Total dogs recorded per location</p></div></div><div className="rank-list">{[...(analytics?.by_location || [])].sort((a, b) => b.count - a.count).map((item, index, all) => <div className="rank-row" key={item.location_id}><div><span className="rank-index">{String(index + 1).padStart(2, '0')}</span><strong>{item.name}</strong><span>{item.count} dogs</span></div><div className="rank-track"><span style={{ width: `${all[0].count ? (item.count / all[0].count) * 100 : 0}%` }} /></div></div>)}</div></section></div></>}
 
           {page === 'settings' && <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> SYSTEM PREFERENCES</div><h1>Settings</h1><p>Control how the monitoring workspace looks and updates.</p></div></div><div className="settings-layout"><section className="card settings-card"><div className="settings-row"><div className="settings-icon"><Sun size={20} /></div><div><strong>Appearance</strong><p>Choose the display mode that works for you.</p></div><button className="outline-button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}{theme === 'light' ? 'Dark mode' : 'Light mode'}</button></div><div className="settings-row"><div className="settings-icon"><RefreshCw size={20} /></div><div><strong>Live updates</strong><p>Dashboard data refreshes every 15 seconds.</p></div><span className="setting-value"><span className="tiny-dot" /> Active</span></div><div className="settings-row"><div className="settings-icon"><ShieldCheck size={20} /></div><div><strong>Scenario mode</strong><p>Generated snapshots let you practice the review flow without a live camera.</p></div><span className="setting-value">Available</span></div></section><section className="card setup-card"><div className="setup-heading"><span className="settings-icon"><Camera size={22} /></span><div><span className="section-kicker">RECORD FLOW</span><h3>What a scenario creates</h3></div></div><p>Choose a camera and dog count through Simulate a scenario. The resulting still snapshot appears in Detection history with its location, time, and review status.</p><div className="flow-note"><Camera size={18} /><span>Camera → snapshot → detection record → operator review</span></div></section></div></>}
         </>}
       </div>
+      <footer className="workspace-footer">
+        <div>
+          <span>BantayAso LGU Dog Monitoring System</span>
+          <span className="footer-dot">•</span>
+          <span>Indang, Cavite</span>
+        </div>
+        <div>
+          <span className="footer-status"><span className="tiny-dot" /> System Active</span>
+          <span className="footer-dot">•</span>
+          <span>Auto-refresh active (15s)</span>
+        </div>
+      </footer>
     </main>
 
     {scenarioOpen && <div className="modal-backdrop modal-centered" onMouseDown={event => { if (!working && event.target === event.currentTarget) setScenarioOpen(false) }}>
@@ -382,7 +574,7 @@ export default function App() {
       <div className="drawer-actions"><button className="outline-button" disabled={working} onClick={() => void updateReview(selected.id, 'flagged')}><Flag size={17} /> Flag event</button><button className="primary-button" disabled={working} onClick={() => void updateReview(selected.id, 'reviewed')}><Check size={17} /> Mark reviewed</button></div>
     </aside></div>}
 
-    {deleteTarget && <div className="modal-backdrop modal-centered confirm-backdrop" onMouseDown={event => { if (!working && event.target === event.currentTarget) setDeleteTarget(null) }}><div className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-delete-title"><span className="confirm-icon"><AlertTriangle size={24} /></span><h2 id="confirm-delete-title">{deleteTarget === 'all' ? 'Delete all detections?' : 'Delete this detection?'}</h2><p>{deleteTarget === 'all' ? `This will remove all ${detections.length} detection records and their stored snapshots. Cameras and locations will stay.` : `This will remove ${deleteTarget.id} and its stored snapshot.`}</p><div className="modal-actions"><button className="outline-button" disabled={working} onClick={() => setDeleteTarget(null)}>Cancel</button><button className="danger-button solid" disabled={working} onClick={() => void confirmDelete()}><Trash2 size={17} /> {working ? 'Deleting…' : deleteTarget === 'all' ? 'Delete all' : 'Delete detection'}</button></div></div></div>}
+    {deleteTarget && <div className="modal-backdrop modal-centered confirm-backdrop" onMouseDown={event => { if (!working && event.target === event.currentTarget) setDeleteTarget(null) }}><div className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-delete-title"><div className="confirm-header"><div className="confirm-header-left"><span className="confirm-icon" aria-hidden="true"><AlertTriangle size={20} strokeWidth={2.2} /></span><div><span className="confirm-eyebrow">CONFIRM ACTION</span><h2 id="confirm-delete-title">{deleteTarget === 'all' ? 'Delete all detections?' : 'Delete detection?'}</h2></div></div><button type="button" className="icon-button" aria-label="Close dialog" disabled={working} onClick={() => setDeleteTarget(null)}><X size={18} /></button></div><p>{deleteTarget === 'all' ? <>Are you sure you want to delete all <strong>{detections.length}</strong> detection records? All stored snapshots will be permanently removed, while your cameras and monitoring zones will remain saved.</> : <>Are you sure you want to delete <code className="confirm-id">{deleteTarget.id}</code>? The detection record and its captured snapshot will be permanently removed.</>}</p><div className="modal-actions"><button type="button" className="outline-button" disabled={working} onClick={() => setDeleteTarget(null)}>Cancel</button><button type="button" className="danger-button solid" disabled={working} onClick={() => void confirmDelete()}><Trash2 size={16} /> {working ? 'Deleting…' : deleteTarget === 'all' ? 'Delete all' : 'Delete detection'}</button></div></div></div>}
     {addOpen && <div className="modal-backdrop modal-centered" onMouseDown={event => { if (event.target === event.currentTarget) setAddOpen(false) }}>
       <form className="add-modal" onSubmit={createDevice}>
         <div className="modal-title"><div><span className="section-kicker">DEVICE REGISTRATION</span><h2>Add CCTV camera</h2><p>Give the camera a monitoring zone so detections have a location.</p></div><button type="button" className="icon-button" aria-label="Close" onClick={() => setAddOpen(false)}><X size={20} /></button></div>
