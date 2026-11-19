@@ -140,9 +140,9 @@ export function MapGraphic({ locations, devices, onSelect }: { locations: Locati
       <path d="M150 75 L225 66 L250 110 L190 135 Z M335 205 L413 192 L430 245 L363 261 Z M25 205 L95 198 L108 249 L22 266 Z" fill="var(--map-park)" opacity=".82" />
       <path d="M162 189 L206 181 L215 211 L171 219 Z M395 70 L450 75 L438 113 L391 107 Z M263 46 L301 45 L307 72 L267 75 Z" fill="var(--map-block)" />
     </svg>
-    <div className="map-label map-label-one">POBLACION</div><div className="map-label map-label-two">BANCOD</div>
+    <div className="map-label map-label-one">POBLACION</div><div className="map-label map-label-two">RIVERSIDE</div>
     {locations.map((location, index) => <button key={location.id} className={`map-pin ${devices.some(d => d.location.id === location.id && d.status === 'online') ? 'is-online' : 'is-offline'}`} style={{ left: `${spots[index % spots.length].x}%`, top: `${spots[index % spots.length].y}%` }} title={location.name} onClick={() => onSelect(location.id)}><Camera size={15} /></button>)}
-    <span className="map-caption">Indang, Cavite · Approximate monitoring zones</span>
+    <span className="map-caption">Approximate monitoring zones</span>
   </div>
 }
 
@@ -543,8 +543,6 @@ export default function App() {
       <footer className="workspace-footer">
         <div>
           <span>BantayAso LGU Dog Monitoring System</span>
-          <span className="footer-dot">•</span>
-          <span>Indang, Cavite</span>
         </div>
         <div>
           <span className="footer-status"><span className="tiny-dot" /> System Active</span>

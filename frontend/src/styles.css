@@ -2616,15 +2616,16 @@ select option {
   display: grid;
   place-items: center;
   color: #34d399;
-  aspect-ratio: 16 / 9;
-  max-height: 320px;
+  aspect-ratio: 4 / 3;
+  max-height: 400px;
   overflow: hidden;
+  flex: none;
 }
 
 .drawer-image img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .drawer-image span {

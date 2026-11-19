@@ -14,8 +14,8 @@ def seed_database(db: Session):
     location = Location(
         name="Town Plaza",
         barangay="Poblacion",
-        latitude=14.1956,
-        longitude=120.8765,
+        latitude=0.0,
+        longitude=0.0,
         description="Example monitoring location for the prototype",
     )
     db.add(location)

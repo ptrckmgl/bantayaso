@@ -106,7 +106,7 @@ camera / phone / CCTV -> edge node (07_detect_stream.py) -> HTTP API -> dashboar
                          (optional: also publish records through MQTT)
 ```
 
-COSC 105 (Intelligent Systems) component, Cavite State University, BSCS 4-1 Group 4.
+COSC 105 (Intelligent Systems) component, BSCS 4-1 Group 4.
 
 ## Repository layout
 

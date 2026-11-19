@@ -4,7 +4,7 @@ Paste this into Claude Code from inside the unzipped `bantayaso` folder.
 
 ## Who and what
 
-I'm Pat, a BSCS 4-1 student at Cavite State University (Indang, Cavite). My group (7 people) is building
+I'm Pat, a BSCS 4-1 student. My group (7 people) is building
 **BantayAso**, an IoT system that helps barangays monitor stray dogs. I own the **COSC 105 Intelligent
 Systems** part: a trained supervised ML model plus the dataset/ML documentation. Groupmates own the
 IoT prototype, the HCI dashboard, and the research paper.

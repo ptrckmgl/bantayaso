@@ -47,7 +47,7 @@ the barangay or municipal ordinance after checking their wording.
 | Roboflow: senox-xmqbj / stray-dog-detection-5klnz v3 (CCTV, dog and person) | 6,392 (9,484 downloaded) | CC BY 4.0 | https://universe.roboflow.com/senox-xmqbj/stray-dog-detection-5klnz/dataset/3 |
 | Roboflow: lr3 / stray-dogs-dsns7 v3 (dog and person) | 2,061 (3,469 downloaded) | CC BY 4.0 | https://universe.roboflow.com/lr3/stray-dogs-dsns7/dataset/3 |
 | Cat photos as hard negatives (no dog, empty labels) | 1,499 (1,500 downloaded) | see `scripts/download_cat_negatives.py` and `results/v3/download_cat_negatives.log` | n/a |
-| Own footage (Indang, Cavite) | none yet (TODO) | Ours | n/a |
+| Own footage | none yet (TODO) | Ours | n/a |
 
 "Downloaded" is the number of images fetched; "used" is what remained in the final training set
 after cleaning (section 3). The Roboflow sets are CC BY 4.0, so the authors must be credited
