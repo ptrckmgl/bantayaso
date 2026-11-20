@@ -278,7 +278,7 @@ def main():
                     help="seconds a number of dogs must stay in view together before it counts as "
                          "their group size (stops one false box from making a pack)")
     ap.add_argument("--pack-size", type=int, default=3,
-                    help="dogs together shown as a PACK in the preview window (the dashboard has its own setting)")
+                    help="no longer used; kept so older commands still run (the dashboard has its own pack setting)")
     # Options of the removed accompanied rule, still accepted so older commands keep working.
     for old in ("--person-memory", "--stray-confirm", "--near-k", "--accompanied-ratio", "--lost-after"):
         ap.add_argument(old, type=float, default=None, help=argparse.SUPPRESS)
@@ -423,9 +423,7 @@ def main():
                 together = dogs.current["together"] if dogs.current else 0
                 if dogs_now:
                     text = f"{dogs_now} in view, {together} together"
-                    color = (0, 140, 255) if together >= args.pack_size else (0, 180, 0)
-                    if together >= args.pack_size:
-                        text = f"PACK OF {together}  ({dogs_now} in view)"
+                    color = (0, 180, 0)
                     cv2.putText(frame, text, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 5)
                     cv2.putText(frame, text, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
                 cv2.imshow("BantayAso", frame)
