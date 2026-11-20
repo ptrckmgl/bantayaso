@@ -16,6 +16,11 @@ runs/
 *.mov
 *.mkv
 *.cache
+# ...except the dashboard's own web assets (logo etc.), which must be in git
+!frontend/public/*.png
+!frontend/public/*.jpg
+!frontend/public/*.svg
+!frontend/public/*.webp
 
 # model weights and exports
 *.pt
