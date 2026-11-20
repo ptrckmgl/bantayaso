@@ -60,7 +60,8 @@ bat\webcam_v4 --camera-id CAM-001
 
 The detector confirms an activity period after 2 seconds and at least 3 processed frames.
 It posts one annotated JPEG and an `active` report to `/api/detections`. While activity
-continues, it updates that same report about every 5 seconds without another image. A brief
+continues, it updates that same report about every 5 seconds. An update carries a new image only
+when a frame shows more dogs than the current image; the dashboard then replaces the old image. A brief
 absence keeps the report open and never changes its peak dog count to zero. After 10 seconds
 without a dog, the report becomes `closed`; a later arrival starts a new report. When dogs
 remain visible continuously, a new report with a fresh snapshot starts every minute and appears
@@ -70,8 +71,9 @@ Person-only periods follow the same rule when no dog is visible. Change the defa
 `--snapshot-interval` (seconds, default 60; 0 disables periodic fresh reports).
 
 For a dog report, `dog_count` and `max_dogs_in_view` are the peak number of dog boxes
-visible together during that report. `snapshot_dog_count` is the number in the one saved
-image. The two may differ if more dogs appear after that image. Dashboard totals add peak
+visible together during that report. `snapshot_dog_count` is the number in the saved image,
+which is refreshed whenever more dogs appear in one frame, so it normally equals the peak (it can
+lag briefly if an upload fails). Dashboard totals add peak
 counts across reports; they are not counts of unique animals, including when one dog remains
 visible across multiple one-minute reports. The API attaches the
 registered camera's location and preserves its snapshot and review status during updates.

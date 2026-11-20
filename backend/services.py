@@ -80,10 +80,20 @@ def create_detection(db: Session, payload: DetectionCreate, snapshot: bytes | No
                 existing.confidence = payload.confidence
                 existing.event_state = payload.event_state
                 existing.event_sequence = payload.event_sequence
-                # Keep the original image and operator review state. Updates carry no new image.
+                # Keep the operator review state. An update carries an image only when the camera
+                # saw more dogs in one frame than the current image shows; it replaces the old one.
+                old_snapshot = None
+                if snapshot:
+                    old_snapshot = existing.snapshot_path
+                    filename = f"{existing.id}-{payload.event_sequence}{suffix}"
+                    (SNAPSHOT_DIR / filename).write_bytes(snapshot)
+                    existing.snapshot_path = f"/snapshots/{filename}"
+                    existing.snapshot_dog_count = payload.snapshot_dog_count
                 existing.device.status = "online"
                 existing.device.last_seen = timestamp
                 db.commit()
+                if old_snapshot and old_snapshot != existing.snapshot_path:
+                    _remove_unreferenced_snapshot(db, old_snapshot)
             return existing
     device = db.get(Device, payload.device_id)
     if device is None:

@@ -1,4 +1,4 @@
-"""Camera activity periods with one image per report and periodic fresh reports."""
+"""Camera activity periods with one image per report (replaced when more dogs appear) and periodic fresh reports."""
 
 from uuid import uuid4
 
@@ -80,7 +80,8 @@ class EpisodeReporter:
         event["sequence"] += 1
 
     def observe(self, ts, count, person_count, confidence, capture=None):
-        """Observe one processed frame. `capture` is called only before the first report."""
+        """Observe one processed frame. `capture` is called for the first image and, for dogs,
+        whenever a frame shows more dogs than the current image."""
         event = self.current
         if count <= 0:
             if event and (ts - event["last"]).total_seconds() >= self.empty_after:
@@ -109,11 +110,15 @@ class EpisodeReporter:
         event["confidence"] = max(event["confidence"], confidence)
         if self.kind == "dog":
             self._track_together(event, ts, count)
-        if not event["created"] and capture and (event["snapshot"] is None or count > event["snapshot_count"]):
+        # Keep the image showing the most dogs seen in one frame, so the picture matches the
+        # report's peak count. After the report exists, a better image goes with the next update.
+        better = event["snapshot_count"] is None or (self.kind == "dog" and count > event["snapshot_count"])
+        if capture and better and (not event["created"] or self.kind == "dog"):
             image = capture()
             if image:
                 event["snapshot"] = image
                 event["snapshot_count"] = count if self.kind == "dog" else 0
+                event["snapshot_delivered"] = False
 
         if not event["created"]:
             if ((event["rotated"] and event["snapshot"] is not None) or
