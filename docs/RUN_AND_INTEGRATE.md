@@ -11,8 +11,8 @@ Everything below was tested on Windows 11 with Python 3.14, PyTorch 2.14 (CUDA) 
 | `models/yolo26n_v3.pt` | Backup (earlier model, trained on data whose test split shared cameras with training). |
 | `scripts/07_detect_stream.py` | The edge node: reads a camera/stream/video, detects dogs and people, and creates fresh snapshot reports each minute of continuous activity. |
 
-The model only finds dogs and people in an image. The "unaccompanied" review flag (a dog with no person
-near it) is made in `07_detect_stream.py`. The dashboard receives camera activity reports.
+The model only finds dogs and people in an image. `07_detect_stream.py` counts how many dogs stay in
+view together (`dogs_together`); the dashboard calls a report a pack when that count reaches its pack size.
 
 ## 1. Setup (once)
 
@@ -40,7 +40,9 @@ python scripts/07_detect_stream.py --weights models/yolo26n_v4.pt --source http:
 ```
 
 Recommended detector settings (the ones used in testing):
-`--conf 0.35 --person-conf 0.20 --person-memory 2 --stray-confirm 3 --suppress-dog-in-person 0.6`.
+`--conf 0.35 --person-conf 0.20 --suppress-dog-in-person 0.6`. A group size counts after it holds for
+2 seconds (`--together-hold 2`). The old `--person-memory`, `--stray-confirm`, `--near-k` and
+`--accompanied-ratio` options are still accepted but do nothing.
 Press `q` in the video window to stop. Without `--show` there is no window; stop with Ctrl-C.
 For recorded video also pass `--video-start 2026-11-18T19:30` (when it was filmed) so the
 record times and the `night` field match the footage.
@@ -106,16 +108,15 @@ MQTT is an additional output. The dashboard's built-in ingestion uses HTTP, not 
  "event_key": "unique-period-key", "event_state": "active", "event_sequence": 0,
  "start": "2026-11-21T08:15:02", "end": "2026-11-21T08:15:04", "duration_s": 2.0,
  "dog_count": 2, "person_count": 0, "snapshot_dog_count": 2,
- "unaccompanied": true, "accompanied_ratio": 0.0, "max_conf": 0.91,
+ "dogs_together": 2, "max_conf": 0.91,
  "frames": 3, "max_dogs_in_view": 2, "night": false}
 ```
 
 | Field | Meaning |
 |---|---|
-| `unaccompanied` | `true` when no person was detected in the report, or when a dog stayed away from a previously detected person long enough; `null` means proximity is still being checked |
-| `accompanied_ratio` | share of dog frames with a nearby person; used with `--stray-confirm` when people have been seen |
+| `dogs_together` | most dogs that stayed in view together for at least `--together-hold` seconds (default 2); the dashboard calls the report a pack when this reaches its pack size (default 3) |
 | `duration_s`, `start`, `end` | how long the activity was observed |
-| `max_dogs_in_view` | dogs seen together (a pack) |
+| `max_dogs_in_view` | most dogs in any single frame; can include a brief false box, so packs use `dogs_together` |
 | `night` | activity started 18:00 to 06:00 (or per `--night-hours`) |
 | `max_conf` | detector's best confidence for the dog |
 | `event_key`, `event_sequence` | report identity and increasing update number; repeated or older updates do not create extra rows |
@@ -140,8 +141,8 @@ Open the dashboard's Detections page to see the snapshots and review them.
 - CUDA out of memory: close other GPU programs; the detector itself only needs about 1 GB.
 - Windows crashes while loading: not an issue for the detector (it is for training: use `--workers 2`).
 - Dog boxes on a dark shirt or carried dogs vanish: that is `--suppress-dog-in-person`; set it to 0 to turn it off.
-- Know the limits: it does not see ownership, so a stray next to a passer-by counts as
-  accompanied; unaccompanied is a flag for staff to check.
+- Know the limits: it does not see ownership, so it reports group size, not whether dogs are strays.
+  A dog hidden behind another, or missed by the model, lowers the count.
 
 ## Metrics (for context)
 

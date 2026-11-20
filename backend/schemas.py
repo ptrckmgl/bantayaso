@@ -60,6 +60,7 @@ class DetectionCreate(BaseModel):
     duration_s: float | None = Field(default=None, ge=0)
     accompanied_ratio: float | None = Field(default=None, ge=0, le=1)
     max_dogs_in_view: int | None = Field(default=None, ge=0)
+    dogs_together: int | None = Field(default=None, ge=0)
     snapshot_dog_count: int | None = Field(default=None, ge=0)
     event_key: str | None = Field(default=None, min_length=1, max_length=120)
     event_state: Literal["active", "closed"] = "closed"
@@ -67,6 +68,10 @@ class DetectionCreate(BaseModel):
     confidence: float = Field(ge=0, le=1)
     review_status: ReviewStatus = "pending"
     source: Literal["simulator", "camera"] = "simulator"
+
+
+class DeviceHeartbeat(BaseModel):
+    state: Literal["running", "stopped"] = "running"
 
 
 class DetectionPatch(BaseModel):
@@ -85,6 +90,7 @@ class DetectionOut(BaseModel):
     duration_s: float | None
     accompanied_ratio: float | None
     max_dogs_in_view: int | None
+    dogs_together: int | None
     snapshot_dog_count: int | None
     event_state: str
     event_sequence: int

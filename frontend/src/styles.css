@@ -4357,3 +4357,25 @@ select option {
   .date-field { flex: 1; }
   .settings-row .hotspot-settings { width: 100%; }
 }
+
+/* Pack sightings */
+.pack-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+  white-space: nowrap;
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+}
+.hourly-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+@media (max-width: 640px) {
+  .hourly-controls { justify-content: flex-start; }
+}
+.hotspot-count strong small { font-family: var(--body-font, inherit); font-size: 12px; font-weight: 600; color: var(--muted); }

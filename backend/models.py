@@ -49,6 +49,8 @@ class Detection(Base):
     duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
     accompanied_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_dogs_in_view: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Most dogs seen together for a sustained time (the detector's --together-hold); decides packs.
+    dogs_together: Mapped[int | None] = mapped_column(Integer, nullable=True)
     snapshot_dog_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     event_key: Mapped[str | None] = mapped_column(String(120), unique=True, nullable=True)
     event_state: Mapped[str] = mapped_column(String(20), default="closed")

@@ -15,12 +15,12 @@ One confirmed period of dog activity produces a snapshot and a dashboard report.
 Counts and duration update on that report without taking another picture. A continuous
 scene gets a fresh report after one minute; an empty scene closes after ten seconds.
 Person-only activity follows the same rule.
-"Unaccompanied" is a proximity-based review flag, not proof of ownership.
+Each dog report carries "dogs_together": the largest number of dogs seen together for at least
+--together-hold seconds. The dashboard calls a report a pack when that number reaches its pack size.
 """
 import argparse
 import json
 import logging
-import math
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -39,17 +39,6 @@ from episodes import EpisodeReporter
 logging.getLogger("ultralytics").addFilter(lambda rec: "Waiting for stream" not in rec.getMessage())
 
 
-def center(b):
-    return ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
-
-
-def is_accompanied(dog_box, person_boxes, k):
-    """A person whose centre is within k x (dog box diagonal) of the dog's centre."""
-    dx, dy = center(dog_box)
-    reach = k * math.hypot(dog_box[2] - dog_box[0], dog_box[3] - dog_box[1])
-    return any(math.hypot(px - dx, py - dy) <= reach for px, py in map(center, person_boxes))
-
-
 def snapshot_for_result(result):
     """Keep annotated uploads within the API's five-megabyte limit."""
     frame = result.plot()
@@ -65,17 +54,163 @@ def snapshot_for_result(result):
 
 
 class Publisher:
+    """Writes every record to the JSONL log, optionally to MQTT, and uploads reports to the API.
+
+    Reports that cannot reach the API (it is down, or the network is) are kept in a queue on disk
+    next to the log, with their snapshots, and sent oldest first once the API answers again, also
+    after a restart. While reports are queued, new reports join the end of the queue so updates
+    keep their order. Reports the API refuses (for example an unknown camera ID) are logged and
+    dropped, because sending them again would not help.
+    """
+    RETRY_EVERY = 15.0   # seconds between attempts while the API is unreachable
+    MAX_PENDING = 2000   # queued uploads kept at most; the oldest are dropped beyond this
+
     def __init__(self, args):
         self.out = Path(args.out)
         self.out.parent.mkdir(parents=True, exist_ok=True)
         self.topic = f"bantayaso/{args.device_id}"
         self.api_url = args.api_url.rstrip("/") if args.api_url else None
+        self.camera_id = getattr(args, "camera_id", None)
+        self.pending_dir = self.out.with_name(self.out.stem + "_pending")
+        self.pending = self._load_pending()
+        self.next_retry = 0.0
+        if self.pending:
+            logging.warning("%d report(s) from an earlier run are waiting in %s", len(self.pending), self.pending_dir)
         self.client = None
         if args.mqtt_host:
             import paho.mqtt.client as mqtt
             self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=args.device_id)
             self.client.connect(args.mqtt_host, args.mqtt_port)
             self.client.loop_start()
+
+    # ----- queue of reports waiting for the API -----
+    def _queue_file(self):
+        return self.pending_dir / "queue.json"
+
+    def _load_pending(self):
+        try:
+            items = json.loads(self._queue_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        return [item for item in items if isinstance(item, dict) and isinstance(item.get("record"), dict)]
+
+    def _save_pending(self):
+        self.pending_dir.mkdir(parents=True, exist_ok=True)
+        temp = self._queue_file().with_suffix(".tmp")
+        temp.write_text(json.dumps(self.pending), encoding="utf-8")
+        temp.replace(self._queue_file())
+        keep = {item["snapshot"] for item in self.pending if item.get("snapshot")}
+        for image in self.pending_dir.glob("*.jpg"):
+            if image.name not in keep:
+                image.unlink(missing_ok=True)
+
+    def _enqueue(self, record, snapshot):
+        key = record["event_key"]
+        entry = {"record": record, "snapshot": None}
+        if snapshot:
+            self.pending_dir.mkdir(parents=True, exist_ok=True)
+            entry["snapshot"] = f"{key}-{record.get('event_sequence', 0)}.jpg"
+            (self.pending_dir / entry["snapshot"]).write_bytes(snapshot)
+        same = [i for i, item in enumerate(self.pending) if item["record"].get("event_key") == key]
+        # Keep a report's first entry (it carries the snapshot) and only its latest update.
+        if len(same) >= 2 and not self.pending[same[-1]].get("snapshot"):
+            self.pending[same[-1]] = entry
+        else:
+            self.pending.append(entry)
+        if len(self.pending) > self.MAX_PENDING:
+            dropped = len(self.pending) - self.MAX_PENDING
+            self.pending = self.pending[dropped:]
+            logging.error("Upload queue is full; dropped the %d oldest report(s), still in %s", dropped, self.out)
+        self._save_pending()
+
+    def flush(self, force=False):
+        """Send queued reports, oldest first, stopping at the first one that cannot get through.
+        Returns True when nothing is left waiting."""
+        if not self.pending:
+            return True
+        if not force and time.time() < self.next_retry:
+            return False
+        sent = 0
+        while self.pending:
+            item = self.pending[0]
+            image = None
+            if item.get("snapshot"):
+                try:
+                    image = (self.pending_dir / item["snapshot"]).read_bytes()
+                except OSError:
+                    image = None
+            if self._upload(item["record"], image) == "retry":
+                self.next_retry = time.time() + self.RETRY_EVERY
+                break
+            self.pending.pop(0)
+            sent += 1
+        if sent:
+            logging.warning("Sent %d queued report(s) to the dashboard; %d still waiting", sent, len(self.pending))
+            self._save_pending()
+        return not self.pending
+
+    # ----- API calls -----
+    def _upload(self, record, snapshot):
+        """One upload attempt: 'ok', 'rejected' (the API refused it for good) or 'retry'."""
+        fields = {
+            "device_id": record["camera_id"], "timestamp": record.get("end", record.get("time")),
+            "dog_count": record.get("dog_count", 1), "person_count": record["person_count"],
+            "confidence": record["max_conf"], "source": "camera",
+            "event_key": record["event_key"],
+            "event_state": record.get("event_state", "closed"),
+            "event_sequence": record.get("event_sequence", 0),
+        }
+        if "dogs_together" in record:
+            fields.update(duration_s=record["duration_s"],
+                          max_dogs_in_view=record["max_dogs_in_view"],
+                          dogs_together=record["dogs_together"])
+        if "track_id" in record:
+            fields["track_id"] = record["track_id"]
+        if record.get("snapshot_dog_count") is not None:
+            fields["snapshot_dog_count"] = record["snapshot_dog_count"]
+        boundary = f"----bantayaso{uuid4().hex}"
+        body = bytearray()
+        for name, value in fields.items():
+            body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+        if snapshot:
+            body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="snapshot"; filename="capture.jpg"\r\nContent-Type: image/jpeg\r\n\r\n'.encode())
+            body.extend(snapshot)
+            body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode())
+        try:
+            request = Request(f"{self.api_url}/api/detections", data=bytes(body),
+                              headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                              method="POST")
+            with urlopen(request, timeout=5) as response:
+                response.read()
+            return "ok"
+        except HTTPError as error:
+            if error.code >= 500:
+                return "retry"
+            logging.error("Dashboard refused report %s: %s; it remains in %s", record["event_key"], error, self.out)
+            return "rejected"
+        except (URLError, TimeoutError, OSError):
+            return "retry"
+
+    def heartbeat(self, state="running"):
+        """Tell the API this camera is running (or has stopped), and resend queued reports."""
+        if not (self.api_url and self.camera_id):
+            return
+        if state == "running" and time.time() < self.next_retry:
+            return  # the API was unreachable a moment ago; do not stall the video loop
+        try:
+            request = Request(f"{self.api_url}/api/devices/{self.camera_id}/heartbeat",
+                              data=json.dumps({"state": state}).encode(),
+                              headers={"Content-Type": "application/json"}, method="POST")
+            with urlopen(request, timeout=3) as response:
+                response.read()
+        except HTTPError as error:
+            logging.warning("Dashboard heartbeat refused for %s: %s", self.camera_id, error)
+            return
+        except (URLError, TimeoutError, OSError):
+            self.next_retry = time.time() + self.RETRY_EVERY
+            return
+        self.flush(force=True)
 
     def send(self, kind, record, snapshot=None):
         line = json.dumps(record)
@@ -84,52 +219,20 @@ class Publisher:
         if self.client:
             # qos=1: the broker acknowledges; paho queues messages while offline
             self.client.publish(f"{self.topic}/{kind}", line, qos=1)
+        delivered = True
         if kind == "events" and self.api_url:
-            uploaded = False
-            fields = {
-                "device_id": record["camera_id"], "timestamp": record.get("end", record.get("time")),
-                "dog_count": record.get("dog_count", 1), "person_count": record["person_count"],
-                "confidence": record["max_conf"], "source": "camera",
-                "event_key": record["event_key"],
-                "event_state": record.get("event_state", "closed"),
-                "event_sequence": record.get("event_sequence", 0),
-            }
-            if "unaccompanied" in record:
-                fields.update(duration_s=record["duration_s"],
-                              accompanied_ratio=record["accompanied_ratio"],
-                              max_dogs_in_view=record["max_dogs_in_view"])
-                if record["unaccompanied"] is not None:
-                    fields["unaccompanied"] = str(record["unaccompanied"]).lower()
-            if "track_id" in record:
-                fields["track_id"] = record["track_id"]
-            if record.get("snapshot_dog_count") is not None:
-                fields["snapshot_dog_count"] = record["snapshot_dog_count"]
-            boundary = f"----bantayaso{uuid4().hex}"
-            body = bytearray()
-            for name, value in fields.items():
-                body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
-            if snapshot:
-                body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="snapshot"; filename="capture.jpg"\r\nContent-Type: image/jpeg\r\n\r\n'.encode())
-                body.extend(snapshot)
-                body.extend(b"\r\n")
-            body.extend(f"--{boundary}--\r\n".encode())
-            for attempt in range(2):
-                try:
-                    request = Request(f"{self.api_url}/api/detections", data=bytes(body),
-                                      headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-                                      method="POST")
-                    with urlopen(request, timeout=5) as response:
-                        response.read()
-                    uploaded = True
-                    break
-                except (HTTPError, URLError, TimeoutError) as error:
-                    if attempt:
-                        logging.error("Dashboard upload failed for %s: %s; event remains in %s",
-                                      record["event_key"], error, self.out)
-                    else:
-                        time.sleep(1)
+            if self.flush():
+                result = self._upload(record, snapshot)
+                if result == "retry":
+                    self._enqueue(record, snapshot)
+                    self.next_retry = time.time() + self.RETRY_EVERY
+                    logging.warning("Dashboard unreachable; report %s queued in %s and will be resent",
+                                    record["event_key"], self.pending_dir)
+                delivered = result != "rejected"
+            else:
+                self._enqueue(record, snapshot)
         print(line)
-        return uploaded if kind == "events" and self.api_url else True
+        return delivered
 
 
 def body_dog_indices(cls, xyxy, dog_id, person_id, contain=0.6, gap=0.3):
@@ -170,27 +273,24 @@ def main():
                     help="trained model (.pt, or an exported _ncnn_model folder / .onnx)")
     ap.add_argument("--conf", type=float, default=0.4, help="dog confidence threshold (use best_conf from 05_evaluate.py)")
     ap.add_argument("--person-conf", type=float, default=None,
-                    help="person confidence threshold (default: same as --conf). Lower it so walkers are "
-                         "found in more frames; a missed person turns an owned dog into a false 'stray'.")
-    ap.add_argument("--person-memory", type=float, default=0.0,
-                    help="seconds a person box is remembered after it was last seen, so a person "
-                         "flickering out of detection still counts as near the dog (0 = off)")
-    ap.add_argument("--stray-confirm", type=float, default=0.0,
-                    help="when people were seen, wait this many seconds without a nearby person "
-                         "before flagging unaccompanied (0 = off); zero people is flagged immediately")
+                    help="person confidence threshold (default: same as --conf)")
+    ap.add_argument("--together-hold", type=float, default=2.0,
+                    help="seconds a number of dogs must stay in view together before it counts as "
+                         "their group size (stops one false box from making a pack)")
+    ap.add_argument("--pack-size", type=int, default=3,
+                    help="dogs together shown as a PACK in the preview window (the dashboard has its own setting)")
+    # Options of the removed accompanied rule, still accepted so older commands keep working.
+    for old in ("--person-memory", "--stray-confirm", "--near-k", "--accompanied-ratio", "--lost-after"):
+        ap.add_argument(old, type=float, default=None, help=argparse.SUPPRESS)
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--fps", type=float, default=5.0, help="video files: frames processed per second (dogs need ~2-5)")
     ap.add_argument("--live-stride", type=int, default=1, help="live streams: process every Nth frame")
-    ap.add_argument("--lost-after", type=float, default=5.0, help="seconds before an overlay track is forgotten")
     ap.add_argument("--min-frames", type=int, default=3, help="minimum positive frames before a report")
     ap.add_argument("--confirm-after", type=float, default=2.0, help="seconds of activity before the first report")
     ap.add_argument("--empty-after", type=float, default=10.0, help="seconds without activity before closing a report")
     ap.add_argument("--update-every", type=float, default=5.0, help="seconds between metadata updates; no new image")
     ap.add_argument("--snapshot-interval", type=float, default=60.0,
                     help="seconds of continuous activity before a fresh report and snapshot (0 = off)")
-    ap.add_argument("--near-k", type=float, default=2.0, help="person within k x dog-box diagonal = with owner")
-    ap.add_argument("--accompanied-ratio", type=float, default=0.3,
-                    help="share of frames with a person nearby above which the dog counts as accompanied")
     ap.add_argument("--night-hours", type=int, nargs=2, default=[18, 6], metavar=("FROM", "TO"),
                     help="hours (24 h clock) counted as night for the 'night' field")
     ap.add_argument("--video-start", help="video files: when the clip was filmed, e.g. 2026-11-18T19:30 "
@@ -199,7 +299,8 @@ def main():
     ap.add_argument("--camera-id", default="CAM-001", help="registered dashboard camera ID; its zone supplies the location")
     ap.add_argument("--api-url", default="http://127.0.0.1:8000",
                     help="dashboard backend URL (empty string disables direct upload)")
-    ap.add_argument("--heartbeat", type=float, default=60.0)
+    ap.add_argument("--heartbeat", type=float, default=60.0,
+                    help="seconds between status records; each also tells the dashboard the camera is running")
     ap.add_argument("--mqtt-host")
     ap.add_argument("--mqtt-port", type=int, default=1883)
     ap.add_argument("--out", default=str(RESULTS / "events.jsonl"))
@@ -247,12 +348,12 @@ def main():
         tmp.close()
         tracker = tmp.name
     pub = Publisher(args)
+    pub.heartbeat("running")  # marks the camera online and sends reports queued by an earlier run
     pub.send("status", {"type": "session_start", "device_id": args.device_id, "camera_id": args.camera_id,
                         "time": datetime.now().isoformat(timespec="seconds"),
                         "settings": {"weights": str(args.weights), "dog_conf": args.conf,
-                                     "person_conf": person_conf, "person_memory_s": args.person_memory,
-                                     "stray_confirm_s": args.stray_confirm, "near_k": args.near_k,
-                                     "accompanied_ratio": args.accompanied_ratio,
+                                     "person_conf": person_conf,
+                                     "together_hold_s": args.together_hold,
                                      "confirm_after_s": args.confirm_after,
                                      "empty_after_s": args.empty_after,
                                      "update_every_s": args.update_every,
@@ -261,13 +362,11 @@ def main():
                                      "imgsz": args.imgsz}})
     dogs = EpisodeReporter("dog", args.device_id, args.camera_id, pub.send, is_night,
                            args.confirm_after, args.min_frames, args.empty_after,
-                           args.update_every, args.accompanied_ratio, args.stray_confirm,
-                           args.snapshot_interval)
+                           args.update_every, together_hold=args.together_hold,
+                           snapshot_interval=args.snapshot_interval)
     people = EpisodeReporter("person", args.device_id, args.camera_id, pub.send, is_night,
                              args.confirm_after, args.min_frames, args.empty_after,
                              args.update_every, snapshot_interval=args.snapshot_interval)
-    tracks = {}  # track id -> latest position and proximity, for preview labels only
-    recent_persons = []  # (time, box) of person boxes, kept for --person-memory seconds
     last_beat, frame_i, processed, suppressed = 0.0, 0, 0, 0
 
     def now_ts():
@@ -291,29 +390,17 @@ def main():
             if args.suppress_dog_in_person > 0 and r.boxes is not None and len(r.boxes):
                 drop = body_dog_indices(r.boxes.cls.int().tolist(), r.boxes.xyxy.tolist(), DOG, PERSON,
                                         contain=args.suppress_dog_in_person)
-                if drop:  # removed before the sighting / accompanied logic and the display
+                if drop:  # removed before the reports and the display
                     suppressed += len(drop)
                     r = r[[i for i in range(len(r.boxes)) if i not in drop]]
             boxes = r.boxes
             cls = boxes.cls.int().tolist() if boxes is not None else []
             xyxy = boxes.xyxy.tolist() if boxes is not None else []
             confs = boxes.conf.tolist() if boxes is not None else []
-            ids = boxes.id.int().tolist() if boxes is not None and boxes.id is not None else [None] * len(cls)
-            persons = [b for c, b in zip(cls, xyxy) if c == PERSON]
-            visible_person_count = len(persons)
-            if args.person_memory > 0:
-                # remember person boxes for a moment, so a walker who flickers out of detection
-                # for a few frames still counts as near the dog
-                recent_persons = [(t, b) for t, b in recent_persons
-                                  if (ts - t).total_seconds() <= args.person_memory]
-                recent_persons += [(ts, b) for b in persons]
-                persons = [b for _, b in recent_persons]
+            visible_person_count = cls.count(PERSON)
             dogs_now = cls.count(DOG)
-            dog_boxes = [b for c, b in zip(cls, xyxy) if c == DOG]
             dogs.observe(ts, dogs_now, visible_person_count,
                          max((cf for c, cf in zip(cls, confs) if c == DOG), default=0.0),
-                         all_near=bool(dog_boxes) and all(is_accompanied(b, persons, args.near_k)
-                                                          for b in dog_boxes),
                          capture=lambda: snapshot_for_result(r))
             # A dog takes precedence over a person-only report. A person-only period
             # continues only when no dog boxes are present.
@@ -321,22 +408,10 @@ def main():
                            visible_person_count,
                            max((cf for c, cf in zip(cls, confs) if c == PERSON), default=0.0),
                            capture=lambda: snapshot_for_result(r))
-            for c, b, cf, tid in zip(cls, xyxy, confs, ids):
-                if c != DOG or tid is None:
-                    continue
-                tr = tracks.setdefault(tid, {"last": ts, "alone_since": None})
-                tr["last"] = ts
-                near = is_accompanied(b, persons, args.near_k)
-                tr["near_now"] = near
-                if near:
-                    tr["alone_since"] = None
-                elif tr["alone_since"] is None:
-                    tr["alone_since"] = ts
-            for tid in [t for t, tr in tracks.items() if (ts - tr["last"]).total_seconds() > args.lost_after]:
-                tracks.pop(tid)
 
             if time.time() - last_beat >= args.heartbeat:
                 last_beat = time.time()
+                pub.heartbeat("running")
                 pub.send("status", {"type": "heartbeat", "device_id": args.device_id,
                                     "camera_id": args.camera_id, "time": ts.isoformat(timespec="seconds"),
                                     "dogs_in_view": dogs_now, "frames_processed": processed,
@@ -344,23 +419,15 @@ def main():
                                     "speed_ms": {k: round(v, 1) for k, v in r.speed.items()}})
             if args.show:
                 frame = r.plot()
-                # live status under each tracked dog, using the smoothed rule (person memory, stray-confirm):
-                # accompanied = a person counts as near right now; checking = alone for less than
-                # --stray-confirm s; UNACCOMPANIED = alone for at least --stray-confirm s.
-                for c, b, tid in zip(cls, xyxy, ids):
-                    if c != DOG or tid not in tracks:
-                        continue
-                    tr = tracks[tid]
-                    alone_now = (ts - tr["alone_since"]).total_seconds() if tr["alone_since"] else 0.0
-                    if tr.get("near_now"):
-                        text, color = "accompanied", (0, 180, 0)
-                    elif alone_now < args.stray_confirm:
-                        text, color = f"checking (alone {alone_now:.1f}s)", (0, 200, 255)
-                    else:
-                        text, color = f"UNACCOMPANIED (alone {alone_now:.0f}s)", (0, 0, 255)
-                    org = (int(b[0]), min(frame.shape[0] - 8, int(b[3]) + 22))
-                    cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
-                    cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                # group size of the current dog report: the most dogs together for --together-hold s
+                together = dogs.current["together"] if dogs.current else 0
+                if dogs_now:
+                    text = f"{dogs_now} in view, {together} together"
+                    color = (0, 140, 255) if together >= args.pack_size else (0, 180, 0)
+                    if together >= args.pack_size:
+                        text = f"PACK OF {together}  ({dogs_now} in view)"
+                    cv2.putText(frame, text, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 5)
+                    cv2.putText(frame, text, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
                 cv2.imshow("BantayAso", frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
@@ -369,6 +436,7 @@ def main():
     finally:
         dogs.close()
         people.close()
+        pub.heartbeat("stopped")  # the dashboard shows the camera offline at once
         if args.show:
             cv2.destroyAllWindows()
 

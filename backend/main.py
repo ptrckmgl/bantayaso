@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -12,9 +13,9 @@ from sqlalchemy.orm import Session, joinedload
 
 from .database import Base, SessionLocal, engine, get_db
 from .models import Detection, Device, Location
-from .schemas import DetectionCreate, DetectionOut, DetectionPatch, DeviceCreate, DeviceOut, LocationCreate, LocationOut
+from .schemas import DetectionCreate, DetectionOut, DetectionPatch, DeviceCreate, DeviceHeartbeat, DeviceOut, LocationCreate, LocationOut
 from .seed import seed_database
-from .services import SNAPSHOT_DIR, activity_report, analytics, hotspots, clear_detections, create_detection, dashboard_summary, delete_detection, detection_query
+from .services import SNAPSHOT_DIR, activity_report, analytics, device_heartbeat, hotspots, refresh_device_status, clear_detections, create_detection, dashboard_summary, delete_detection, detection_query
 
 
 @asynccontextmanager
@@ -27,7 +28,7 @@ async def lifespan(app: FastAPI):
             "person_count": "INTEGER NOT NULL DEFAULT 0", "unaccompanied": "BOOLEAN",
             "track_id": "INTEGER", "duration_s": "FLOAT", "accompanied_ratio": "FLOAT",
             "max_dogs_in_view": "INTEGER", "event_key": "VARCHAR(120)",
-            "snapshot_dog_count": "INTEGER",
+            "snapshot_dog_count": "INTEGER", "dogs_together": "INTEGER",
             "event_state": "VARCHAR(20) NOT NULL DEFAULT 'closed'",
             "event_sequence": "INTEGER NOT NULL DEFAULT 0",
         }
@@ -56,7 +57,9 @@ _revision = 0
 async def bump_revision(request: Request, call_next):
     global _revision
     response = await call_next(request)
-    if request.method in {"POST", "PATCH", "PUT", "DELETE"} and response.status_code < 400:
+    # Heartbeats arrive every few seconds; they count as a change only when a camera's status changes.
+    if (request.method in {"POST", "PATCH", "PUT", "DELETE"} and response.status_code < 400
+            and not request.url.path.endswith("/heartbeat")):
         _revision += 1
     return response
 
@@ -67,12 +70,17 @@ def health():
 
 
 @app.get("/api/revision")
-def revision():
+def revision(db: Session = Depends(get_db)):
+    global _revision
+    # The dashboard polls this every few seconds, so a silent camera turns offline here.
+    if refresh_device_status(db):
+        _revision += 1
     return {"revision": f"{_boot_id}-{_revision}"}
 
 
 @app.get("/api/dashboard/summary")
 def summary(db: Session = Depends(get_db)):
+    refresh_device_status(db)
     return dashboard_summary(db)
 
 
@@ -108,6 +116,7 @@ def add_location(payload: LocationCreate, db: Session = Depends(get_db)):
 
 @app.get("/api/devices", response_model=list[DeviceOut])
 def devices(db: Session = Depends(get_db)):
+    refresh_device_status(db)
     return db.execute(select(Device).options(joinedload(Device.location)).order_by(Device.id)).scalars().all()
 
 
@@ -134,6 +143,19 @@ def add_device(payload: DeviceCreate, db: Session = Depends(get_db)):
         raise HTTPException(409, "Camera ID or monitoring zone already exists") from error
     db.refresh(device)
     return device
+
+
+@app.post("/api/devices/{device_id}/heartbeat")
+def heartbeat(device_id: str, payload: DeviceHeartbeat | None = None, db: Session = Depends(get_db)):
+    """Sent by a running detector every few seconds, and once with state "stopped" when it exits."""
+    global _revision
+    try:
+        changed = device_heartbeat(db, device_id, payload.state if payload else "running")
+    except ValueError as error:
+        raise HTTPException(404, str(error)) from error
+    if changed:
+        _revision += 1
+    return {"device_id": device_id, "status": db.get(Device, device_id).status}
 
 
 @app.get("/api/devices/{device_id}", response_model=DeviceOut)
@@ -169,7 +191,7 @@ async def add_detection(device_id: str = Form(...), timestamp: datetime = Form(.
                         person_count: int = Form(0), unaccompanied: bool | None = Form(None),
                         track_id: int | None = Form(None), duration_s: float | None = Form(None),
                         accompanied_ratio: float | None = Form(None), max_dogs_in_view: int | None = Form(None),
-                        snapshot_dog_count: int | None = Form(None),
+                        snapshot_dog_count: int | None = Form(None), dogs_together: int | None = Form(None),
                         event_key: str | None = Form(None),
                         event_state: str = Form("closed"), event_sequence: int = Form(0),
                         snapshot: UploadFile | None = File(None), db: Session = Depends(get_db)):
@@ -178,7 +200,7 @@ async def add_detection(device_id: str = Form(...), timestamp: datetime = Form(.
                                   confidence=confidence, source=source, person_count=person_count,
                                   unaccompanied=unaccompanied, track_id=track_id, duration_s=duration_s,
                                   accompanied_ratio=accompanied_ratio, max_dogs_in_view=max_dogs_in_view,
-                                  snapshot_dog_count=snapshot_dog_count,
+                                  snapshot_dog_count=snapshot_dog_count, dogs_together=dogs_together,
                                   event_key=event_key, event_state=event_state,
                                   event_sequence=event_sequence)
     except Exception as error:
@@ -227,16 +249,18 @@ def analytics_endpoint(db: Session = Depends(get_db)):
 
 
 @app.get("/api/analytics/report")
-def activity_report_endpoint(start: date | None = None, end: date | None = None, db: Session = Depends(get_db)):
-    """Activity between two dates (Manila time, inclusive): daily, hour of day, and per-zone peak hours."""
-    return activity_report(db, start, end)
+def activity_report_endpoint(start: date | None = None, end: date | None = None,
+                             pack_size: int = Query(3, ge=2, le=50), db: Session = Depends(get_db)):
+    """Activity between two dates (Manila time, inclusive): daily, hour of day, per-zone peak hours and packs."""
+    return activity_report(db, start, end, pack_size)
 
 
 @app.get("/api/hotspots")
 def hotspots_endpoint(window_hours: int = Query(24, ge=1, le=24 * 30), threshold: int = Query(5, ge=1, le=1000),
+                      basis: Literal["dogs", "packs"] = "dogs", pack_size: int = Query(3, ge=2, le=50),
                       db: Session = Depends(get_db)):
-    """Zones whose dog count in the last `window_hours` reached `threshold`."""
-    return hotspots(db, window_hours, threshold)
+    """Zones whose dogs, or pack sightings, in the last `window_hours` reached `threshold`."""
+    return hotspots(db, window_hours, threshold, basis, pack_size)
 
 
 @app.post("/api/demo/simulate", response_model=DetectionOut, status_code=201)

@@ -10,34 +10,39 @@ from episodes import EpisodeReporter
 
 
 class EpisodeReporterTest(unittest.TestCase):
-    def test_zero_people_is_unaccompanied_even_in_a_zero_second_report(self):
+    def test_group_size_counts_only_after_it_holds_for_two_seconds(self):
         sent = []
-        ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
         reporter = EpisodeReporter("dog", "node", "CAM-001",
                                    lambda kind, record, image: sent.append(record),
-                                   lambda time: False, confirm_after=0, min_frames=1,
-                                   stray_confirm=3)
-        reporter.observe(ts, 1, 0, .81, capture=lambda: b"image")
+                                   lambda time: False, update_every=100)
+        # one frame with a false fourth box, then three dogs held for 2 s
+        for second, count in [(0, 4), (1, 3), (2, 3), (3, 3)]:
+            reporter.observe(t0 + timedelta(seconds=second), count, 1, .9, capture=lambda: b"image")
         reporter.close()
-        self.assertEqual([record["unaccompanied"] for record in sent], [True, True])
-        self.assertEqual(sent[0]["status"], "UNACCOMPANIED")
-        self.assertEqual(sent[0]["duration_s"], 0)
+        self.assertEqual(sent[-1]["max_dogs_in_view"], 4)
+        self.assertEqual(sent[-1]["dogs_together"], 3)
+        self.assertNotIn("unaccompanied", sent[-1])
+        self.assertNotIn("status", sent[-1])
 
-    def test_person_near_is_accompanied_and_uncertain_proximity_is_checking(self):
+    def test_a_larger_group_sends_an_update_and_a_long_gap_restarts_the_count(self):
         sent = []
-        ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
         reporter = EpisodeReporter("dog", "node", "CAM-001",
                                    lambda kind, record, image: sent.append(record),
-                                   lambda time: False, confirm_after=0, min_frames=1,
-                                   update_every=100, stray_confirm=3)
-        reporter.observe(ts, 1, 1, .9, all_near=True, capture=lambda: b"image")
-        self.assertEqual(sent[0]["unaccompanied"], False)
-        reporter.observe(ts + timedelta(seconds=1), 1, 1, .9, all_near=False)
-        self.assertIsNone(sent[1]["unaccompanied"])
-        self.assertEqual(sent[1]["status"], "checking")
-        for second in (2, 3, 4):
-            reporter.observe(ts + timedelta(seconds=second), 1, 0, .9, all_near=False)
-        self.assertTrue(sent[-1]["unaccompanied"])
+                                   lambda time: False, update_every=100)
+        for second in (0, 1, 2):
+            reporter.observe(t0 + timedelta(seconds=second), 1, 0, .9, capture=lambda: b"image")
+        self.assertEqual(sent[-1]["dogs_together"], 1)
+        # three dogs, but with a 3 s detection gap: the count restarts after the gap
+        for second, count in [(3, 3), (4, 3), (7, 3), (8, 3)]:
+            reporter.observe(t0 + timedelta(seconds=second), count, 0, .9)
+        self.assertEqual(sent[-1]["dogs_together"], 1)
+        reporter.observe(t0 + timedelta(seconds=9), 3, 0, .9)
+        self.assertEqual(sent[-1]["dogs_together"], 3)  # sent at once, not at the next 5 s update
+        self.assertEqual(sent[-1]["end"], (t0 + timedelta(seconds=9)).isoformat(timespec="seconds"))
+        # first report, the peak rising to 3 in view, then the group of 3 being confirmed
+        self.assertEqual([record["dogs_together"] for record in sent], [1, 1, 3])
 
     def test_continuous_dogs_get_fresh_report_after_interval(self):
         sent = []

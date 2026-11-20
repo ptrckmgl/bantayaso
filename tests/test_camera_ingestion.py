@@ -47,7 +47,7 @@ class CameraIngestionTest(unittest.TestCase):
                             args = dict(device_id="CAM-001", timestamp=datetime.now(timezone.utc),
                                         dog_count=1, confidence=.91, source="camera", person_count=2,
                                         unaccompanied=True, track_id=7, duration_s=4.5,
-                                        accompanied_ratio=0.1, max_dogs_in_view=3, snapshot_dog_count=2,
+                                        accompanied_ratio=0.1, max_dogs_in_view=3, snapshot_dog_count=2, dogs_together=3,
                                         event_key="session-7", event_state="active", event_sequence=0,
                                         db=db)
                             first = await main.add_detection(snapshot=upload(), **args)
@@ -58,6 +58,7 @@ class CameraIngestionTest(unittest.TestCase):
                             self.assertEqual(first.person_count, 2)
                             self.assertTrue(first.unaccompanied)
                             self.assertEqual(first.max_dogs_in_view, 3)
+                            self.assertEqual(first.dogs_together, 3)
                             self.assertEqual(first.snapshot_dog_count, 2)
                             self.assertTrue((services.SNAPSHOT_DIR / first.snapshot_path.split("/")[-1]).exists())
                             first.review_status = "reviewed"
@@ -78,7 +79,7 @@ class CameraIngestionTest(unittest.TestCase):
                                 device_id="CAM-001", timestamp=datetime.now(timezone.utc), dog_count=0,
                                 confidence=.82, source="camera", person_count=3, event_key="session-person-1",
                                 unaccompanied=None, track_id=None, duration_s=None,
-                                accompanied_ratio=None, max_dogs_in_view=None, snapshot_dog_count=0,
+                                accompanied_ratio=None, max_dogs_in_view=None, snapshot_dog_count=0, dogs_together=None,
                                 event_state="active", event_sequence=0,
                                 snapshot=upload(), db=db)
                             self.assertEqual(person.dog_count, 0)
@@ -132,8 +133,8 @@ class CameraIngestionTest(unittest.TestCase):
                             record = {
                                 "type": "sighting", "camera_id": "CAM-001", "track_id": 8,
                                 "end": datetime.now(timezone.utc).isoformat(), "person_count": 1,
-                                "max_conf": .92, "unaccompanied": True, "duration_s": 6.0,
-                                "accompanied_ratio": .1, "max_dogs_in_view": 2,
+                                "max_conf": .92, "duration_s": 6.0,
+                                "max_dogs_in_view": 2, "dogs_together": 2,
                                 "snapshot_dog_count": 2,
                                 "event_key": "bridge-sighting-8", "event_state": "active",
                                 "event_sequence": 0,
@@ -150,9 +151,10 @@ class CameraIngestionTest(unittest.TestCase):
                                                           "end": (datetime.fromisoformat(record["end"]) + timedelta(minutes=1)).isoformat(),
                                                           "event_sequence": 0, "event_state": "active"},
                                                b"\xff\xd8next-jpeg")
-                                publisher.send("events", {**record, "event_key": "bridge-sighting-checking",
-                                                          "unaccompanied": None, "event_sequence": 0},
-                                               b"\xff\xd8checking-jpeg")
+                                publisher.send("events", {**record, "event_key": "bridge-sighting-pack",
+                                                          "dogs_together": 4, "max_dogs_in_view": 5,
+                                                          "event_sequence": 0},
+                                               b"\xff\xd8pack-jpeg")
                             newest = client.get("/api/detections").json()[0]
                             with SessionLocal() as db:
                                 next_report = db.query(Detection).filter_by(event_key="bridge-sighting-next").one()
@@ -162,11 +164,12 @@ class CameraIngestionTest(unittest.TestCase):
                                 self.assertEqual(bridged.event_state, "closed")
                                 self.assertEqual(db.query(Detection).filter_by(event_key="bridge-sighting-8").count(), 1)
                                 self.assertEqual(bridged.person_count, 1)
-                                self.assertTrue(bridged.unaccompanied)
+                                self.assertEqual(bridged.dogs_together, 2)
+                                self.assertIsNone(bridged.unaccompanied)  # the detector no longer sends it
                                 self.assertEqual(bridged.snapshot_dog_count, 2)
                                 self.assertIsNotNone(bridged.snapshot_path)
-                                checking = db.query(Detection).filter_by(event_key="bridge-sighting-checking").one()
-                                self.assertIsNone(checking.unaccompanied)
+                                pack = db.query(Detection).filter_by(event_key="bridge-sighting-pack").one()
+                                self.assertEqual((pack.dogs_together, pack.max_dogs_in_view), (4, 5))
                                 bridged_id = bridged.id
                                 bridged_snapshot = services.SNAPSHOT_DIR / bridged.snapshot_path.split("/")[-1]
 
