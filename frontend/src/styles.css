@@ -4279,3 +4279,81 @@ select option {
     gap: 12px;
   }
 }
+
+/* Hotspot alerts and the activity report period */
+.heading-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.hotspot-card, .range-bar, .hourly-card { margin-bottom: 24px; }
+.hotspot-list { padding: 18px 28px 24px; display: grid; gap: 10px; }
+.hotspot-empty { color: var(--muted); font-size: 13px; }
+.hotspot-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) minmax(120px, 2fr) minmax(110px, auto) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-subtle);
+}
+.hotspot-row.is-hot { border-color: var(--amber-border); background: var(--amber-soft); }
+.hotspot-name strong, .hotspot-count strong { display: block; color: var(--text-primary); font-size: 14px; }
+.hotspot-name span, .hotspot-count span { color: var(--muted); font-size: 12px; }
+.hotspot-count strong { font-family: var(--mono-font); font-size: 18px; }
+.hotspot-meter { height: 8px; border-radius: 8px; background: var(--card); border: 1px solid var(--border); overflow: hidden; }
+.hotspot-meter span { display: block; height: 100%; border-radius: 8px; background: linear-gradient(90deg, #10b981 0%, #34d399 100%); }
+.hotspot-row.is-hot .hotspot-meter span { background: linear-gradient(90deg, #f59e0b 0%, var(--amber) 100%); }
+.hotspot-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--amber);
+  background: var(--amber-soft);
+  border: 1px solid var(--amber-border);
+}
+.hotspot-badge.calm { color: var(--muted); background: var(--card); border-color: var(--border); }
+.camera-pills { display: inline-flex; align-items: center; gap: 6px; }
+.notification-thumb.hotspot-thumb { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border); }
+
+.range-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 24px; }
+.range-title { display: flex; align-items: center; gap: 12px; color: var(--green); }
+.range-title strong { display: block; color: var(--text-primary); font-size: 14px; }
+.range-title span { color: var(--muted); font-size: 12.5px; }
+.range-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.range-presets { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.range-presets button { padding: 9px 12px; font-size: 12.5px; font-weight: 600; color: var(--subtext); border-right: 1px solid var(--border); }
+.range-presets button:last-child { border-right: 0; }
+.range-presets button:hover { background: var(--green-soft); }
+.range-presets button.active { background: var(--green); color: #fff; }
+.date-field, .hotspot-settings label { display: grid; gap: 4px; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.date-field input, .hotspot-settings input, .hotspot-settings select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.date-field input:focus, .hotspot-settings input:focus, .hotspot-settings select:focus { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+:root[data-theme='dark'] .date-field input { color-scheme: dark; }
+.hotspot-settings { display: flex; gap: 10px; }
+.hotspot-settings input { width: 76px; }
+.rank-peak { display: flex; align-items: center; gap: 6px; margin: 6px 0 0 28px; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 640px) {
+  .hotspot-list { padding: 14px 16px 18px; }
+  .hotspot-row { grid-template-columns: 1fr auto; gap: 10px; }
+  .hotspot-meter { grid-column: 1 / -1; grid-row: 2; }
+  .range-bar { padding: 16px; }
+  .range-controls, .range-presets { width: 100%; }
+  .range-presets button { flex: 1; padding: 9px 6px; }
+  .date-field { flex: 1; }
+  .settings-row .hotspot-settings { width: 100%; }
+}

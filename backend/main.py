@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, select, text
@@ -13,7 +14,7 @@ from .database import Base, SessionLocal, engine, get_db
 from .models import Detection, Device, Location
 from .schemas import DetectionCreate, DetectionOut, DetectionPatch, DeviceCreate, DeviceOut, LocationCreate, LocationOut
 from .seed import seed_database
-from .services import SNAPSHOT_DIR, analytics, clear_detections, create_detection, dashboard_summary, delete_detection, detection_query
+from .services import SNAPSHOT_DIR, activity_report, analytics, hotspots, clear_detections, create_detection, dashboard_summary, delete_detection, detection_query
 
 
 @asynccontextmanager
@@ -45,10 +46,29 @@ app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.mount("/snapshots", StaticFiles(directory=SNAPSHOT_DIR), name="snapshots")
 
+# Change counter for the dashboard: it polls /api/revision every few seconds and reloads its data
+# only when this changes. The boot id makes a restarted API count as a change.
+_boot_id = uuid4().hex[:8]
+_revision = 0
+
+
+@app.middleware("http")
+async def bump_revision(request: Request, call_next):
+    global _revision
+    response = await call_next(request)
+    if request.method in {"POST", "PATCH", "PUT", "DELETE"} and response.status_code < 400:
+        _revision += 1
+    return response
+
 
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/revision")
+def revision():
+    return {"revision": f"{_boot_id}-{_revision}"}
 
 
 @app.get("/api/dashboard/summary")
@@ -204,6 +224,19 @@ def remove_all_detections(db: Session = Depends(get_db)):
 @app.get("/api/analytics")
 def analytics_endpoint(db: Session = Depends(get_db)):
     return analytics(db)
+
+
+@app.get("/api/analytics/report")
+def activity_report_endpoint(start: date | None = None, end: date | None = None, db: Session = Depends(get_db)):
+    """Activity between two dates (Manila time, inclusive): daily, hour of day, and per-zone peak hours."""
+    return activity_report(db, start, end)
+
+
+@app.get("/api/hotspots")
+def hotspots_endpoint(window_hours: int = Query(24, ge=1, le=24 * 30), threshold: int = Query(5, ge=1, le=1000),
+                      db: Session = Depends(get_db)):
+    """Zones whose dog count in the last `window_hours` reached `threshold`."""
+    return hotspots(db, window_hours, threshold)
 
 
 @app.post("/api/demo/simulate", response_model=DetectionOut, status_code=201)

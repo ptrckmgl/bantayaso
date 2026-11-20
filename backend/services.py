@@ -153,3 +153,83 @@ def analytics(db: Session):
         for loc in locations
     ]
     return {"daily": daily, "by_location": by_location}
+
+
+def _local(value: datetime):
+    aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return aware.astimezone(MANILA)
+
+
+def hotspots(db: Session, window_hours: int = 24, threshold: int = 5):
+    """Zones whose dogs in the last `window_hours` reach `threshold` (a fixed limit set by the operator).
+
+    Dogs are summed from each report's peak count, like the other dashboard totals, so this measures
+    activity, not unique dogs. `crossed_at` is when the running total in the window reached the limit.
+    """
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(hours=window_hours)
+    events = db.execute(select(Detection).order_by(Detection.timestamp)).scalars().all()
+    recent = [event for event in events if _local(event.timestamp) >= since and event.dog_count > 0]
+    zones = []
+    for location in db.execute(select(Location).order_by(Location.name)).scalars().all():
+        matches = [event for event in recent if event.location_id == location.id]
+        total, crossed_at = 0, None
+        for event in matches:
+            total += event.dog_count
+            if crossed_at is None and total >= threshold:
+                crossed_at = _local(event.timestamp)
+        zones.append({
+            "location_id": location.id, "name": location.name, "barangay": location.barangay,
+            "dogs": total, "reports": len(matches),
+            "last_seen": _local(matches[-1].timestamp).isoformat() if matches else None,
+            "is_hotspot": total >= threshold,
+            "crossed_at": crossed_at.isoformat() if crossed_at else None,
+        })
+    zones.sort(key=lambda zone: (not zone["is_hotspot"], -zone["dogs"], zone["name"]))
+    return {"window_hours": window_hours, "threshold": threshold, "generated_at": _local(now).isoformat(),
+            "zones": zones}
+
+
+def _peak_hour(hours: list[dict]):
+    best = max(hours, key=lambda item: item["dogs"])
+    return best["hour"] if best["dogs"] > 0 else None
+
+
+def activity_report(db: Session, start=None, end=None):
+    """Dog activity between two local (Manila) dates, inclusive: per day, per hour of day, and per zone."""
+    today = datetime.now(MANILA).date()
+    end = end or today
+    start = start or end - timedelta(days=6)
+    if start > end:
+        start, end = end, start
+    start = max(start, end - timedelta(days=365))
+    events = [event for event in db.execute(select(Detection).order_by(Detection.timestamp)).scalars().all()
+              if start <= _local(event.timestamp).date() <= end]
+
+    def hourly(rows):
+        result = [{"hour": hour, "dogs": 0, "detections": 0} for hour in range(24)]
+        for event in rows:
+            slot = result[_local(event.timestamp).hour]
+            slot["dogs"] += event.dog_count
+            slot["detections"] += 1
+        return result
+
+    daily = []
+    day = start
+    while day <= end:
+        matches = [event for event in events if _local(event.timestamp).date() == day]
+        daily.append({"date": day.isoformat(), "detections": len(matches), "dogs": sum(e.dog_count for e in matches)})
+        day += timedelta(days=1)
+    hours = hourly(events)
+    zones = []
+    for location in db.execute(select(Location).order_by(Location.name)).scalars().all():
+        matches = [event for event in events if event.location_id == location.id]
+        zone_hours = hourly(matches)
+        zones.append({"location_id": location.id, "name": location.name, "barangay": location.barangay,
+                      "dogs": sum(e.dog_count for e in matches), "detections": len(matches),
+                      "night_dogs": sum(e.dog_count for e in matches if _local(e.timestamp).hour >= 18 or _local(e.timestamp).hour < 6),
+                      "peak_hour": _peak_hour(zone_hours), "hourly": zone_hours})
+    zones.sort(key=lambda zone: (-zone["dogs"], zone["name"]))
+    return {"start": start.isoformat(), "end": end.isoformat(), "dogs": sum(e.dog_count for e in events),
+            "detections": len(events), "peak_hour": _peak_hour(hours), "daily": daily, "hourly": hours,
+            "by_location": zones}

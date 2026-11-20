@@ -3,10 +3,10 @@ import {
   Activity, ArrowDownToLine, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, Check, CheckCircle2,
   ChevronDown, ChevronRight, Clock3, Dog, Eye, Flag, LayoutDashboard,
   MapPin, Menu, Moon, PawPrint, Plus, Radio, RefreshCw, Search, Settings2, ShieldCheck,
-  SlidersHorizontal, Sun, Trash2, Video, WifiOff, X, ChartNoAxesCombined, AlertTriangle,
+  SlidersHorizontal, Sun, Trash2, Video, WifiOff, X, ChartNoAxesCombined, AlertTriangle, Flame,
 } from 'lucide-react'
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api, type Analytics, type Detection, type Device, type Location, type Summary } from './api'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { api, type ActivityReport, type Analytics, type Detection, type Device, type Hotspots, type HotspotZone, type Location, type Summary } from './api'
 
 type Page = 'overview' | 'detections' | 'cameras' | 'analytics' | 'settings'
 type Theme = 'light' | 'dark'
@@ -272,7 +272,73 @@ function CameraDetail({ device, rows, onBack, onViewHistory, onOpen, onDelete }:
       <div className="camera-detail-info"><span className="section-kicker">REGISTERED CAMERA</span><h2>{device.name}</h2><p><MapPin size={16} /> {device.location.name}, Barangay {device.location.barangay}</p><div className="camera-detail-meta"><StatusPill status={device.status} /><span><Clock3 size={15} /> {device.last_seen ? `Last signal ${dateTime(device.last_seen)}` : 'No signal yet'}</span></div><small>{rows.length} detection{rows.length === 1 ? '' : 's'} recorded for this camera</small></div>
     </section>
     <div className="records-summary"><div><span>Camera detections</span><strong>{rows.length}</strong></div><div><span>Awaiting review</span><strong>{rows.filter(row => row.review_status === 'pending').length}</strong></div><div><span>Dog counts across events</span><strong>{rows.reduce((sum, row) => sum + row.dog_count, 0)}</strong></div></div>
-    <section className="card records-card camera-detail-records"><div className="card-header"><div><span className="section-kicker">CAMERA HISTORY</span><h3>Detections at {device.location.name}</h3><p>Snapshots and reports from {device.name}</p></div></div><DetectionList rows={rows} onOpen={onOpen} onDelete={onDelete} emptyMessage={`No detections have been recorded for ${device.name} yet.`} /><div className="records-footer">Showing {rows.length} detection{rows.length === 1 ? '' : 's'} from {device.name}<span>Updates automatically every 15 seconds</span></div></section>
+    <section className="card records-card camera-detail-records"><div className="card-header"><div><span className="section-kicker">CAMERA HISTORY</span><h3>Detections at {device.location.name}</h3><p>Snapshots and reports from {device.name}</p></div></div><DetectionList rows={rows} onOpen={onOpen} onDelete={onDelete} emptyMessage={`No detections have been recorded for ${device.name} yet.`} /><div className="records-footer">Showing {rows.length} detection{rows.length === 1 ? '' : 's'} from {device.name}<span>New reports appear within a few seconds</span></div></section>
+  </>
+}
+
+const hourLabel = (hour: number) => `${hour % 12 || 12} ${hour < 12 ? 'AM' : 'PM'}`
+const hourRange = (hour: number | null) => hour === null ? 'No activity yet' : `${hourLabel(hour)} – ${hourLabel((hour + 1) % 24)}`
+const manilaDate = (daysAgo = 0) => new Date(Date.now() + 8 * 3600e3 - daysAgo * 86400e3).toISOString().slice(0, 10)
+const shortDate = (value: string) => new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${value}T12:00:00+08:00`))
+const windowLabel = (hours: number) => hours === 24 ? '24 hours' : hours % 24 === 0 ? `${hours / 24} days` : `${hours} hours`
+const hotspotAlertId = (zone: HotspotZone) => `hotspot-${zone.location_id}-${(zone.crossed_at || '').slice(0, 10)}`
+const WINDOW_OPTIONS = [6, 12, 24, 48, 168]
+type ReportRange = { start: string; end: string }
+type HotspotSettings = { windowHours: number; threshold: number }
+
+function storedHotspotSettings(): HotspotSettings {
+  try {
+    const stored = JSON.parse(localStorage.getItem('bantayaso-hotspot-settings') || '{}')
+    return {
+      windowHours: WINDOW_OPTIONS.includes(stored.windowHours) ? stored.windowHours : 24,
+      threshold: Number.isInteger(stored.threshold) && stored.threshold >= 1 && stored.threshold <= 1000 ? stored.threshold : 5,
+    }
+  } catch { return { windowHours: 24, threshold: 5 } }
+}
+
+function HotspotCard({ hotspots, onSettings }: { hotspots: Hotspots | null; onSettings: () => void }) {
+  const zones = hotspots?.zones || []
+  const hot = zones.filter(zone => zone.is_hotspot)
+  return <section className="card hotspot-card">
+    <div className="card-header"><div><span className="section-kicker">HOTSPOT ALERTS</span><h3>{hot.length ? `${hot.length} ${hot.length === 1 ? 'zone is' : 'zones are'} over the limit` : 'No zone is over the limit'}</h3><p>A zone becomes a hotspot at {hotspots?.threshold ?? '–'} or more dogs in the last {hotspots ? windowLabel(hotspots.window_hours) : '–'}.</p></div><button className="outline-button" onClick={onSettings}><SlidersHorizontal size={16} /> Change limit</button></div>
+    <div className="hotspot-list">{zones.length === 0 ? <p className="hotspot-empty">No monitoring zones yet.</p> : zones.map(zone => <div className={`hotspot-row ${zone.is_hotspot ? 'is-hot' : ''}`} key={zone.location_id}>
+      <div className="hotspot-name"><strong>{zone.name}</strong><span>{zone.barangay}</span></div>
+      <div className="hotspot-meter" aria-label={`${zone.dogs} of ${hotspots?.threshold} dogs`}><span style={{ width: `${Math.min(100, hotspots ? zone.dogs / hotspots.threshold * 100 : 0)}%` }} /></div>
+      <div className="hotspot-count"><strong>{zone.dogs}</strong><span>{zone.reports} {zone.reports === 1 ? 'report' : 'reports'}{zone.last_seen ? ` · last ${timeOnly(zone.last_seen)}` : ''}</span></div>
+      {zone.is_hotspot ? <span className="hotspot-badge"><Flame size={13} /> Hotspot</span> : <span className="hotspot-badge calm">Below limit</span>}
+    </div>)}</div>
+  </section>
+}
+
+function AnalyticsPage({ detections, summary, report, hotspots, range, onRange, onExportRecords, onExportReport, onSettings }: {
+  detections: Detection[]; summary: Summary | null; report: ActivityReport | null; hotspots: Hotspots | null; range: ReportRange
+  onRange: (range: ReportRange) => void; onExportRecords: () => void; onExportReport: () => void; onSettings: () => void
+}) {
+  const presets = [7, 30, 90]
+  const today = manilaDate()
+  const activePreset = presets.find(days => range.end === today && range.start === manilaDate(days - 1))
+  const hourly = report?.hourly || []
+  const peak = report?.peak_hour ?? null
+  const zones = report?.by_location || []
+  const topZone = zones[0]?.dogs ? zones[0].dogs : 0
+  const tooltipStyle = { border: '1px solid var(--border)', borderRadius: 12, background: 'var(--card)', color: 'var(--text)' }
+  return <>
+    <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> MONITORING INSIGHTS</div><h1>Activity analytics</h1><p>See where dogs gather, and at what time of day.</p></div><div className="heading-actions"><button className="outline-button" onClick={onExportReport} disabled={!report}><ArrowDownToLine size={17} /> Export report</button><button className="outline-button" onClick={onExportRecords}><ArrowDownToLine size={17} /> Export records</button></div></div>
+    <div className="analytics-top"><div className="analytics-highlight card stat-card-green"><div className="analytics-hl-top"><span className="section-kicker">DOG COUNTS ACROSS EVENTS</span></div><strong>{detections.reduce((sum, row) => sum + row.dog_count, 0)}</strong><p>Across {summary?.total_detections || 0} recorded events</p></div><div className="analytics-highlight card stat-card-blue"><div className="analytics-hl-top"><span className="section-kicker">AVERAGE CONFIDENCE</span></div><strong>{detections.length ? Math.round(detections.reduce((sum, row) => sum + row.confidence, 0) / detections.length * 100) : 0}%</strong><p>Reported confidence across recorded events</p></div><div className="analytics-highlight card stat-card-amber"><div className="analytics-hl-top"><span className="section-kicker">REVIEWED EVENTS</span></div><strong>{detections.filter(row => row.review_status === 'reviewed').length}</strong><p>{summary?.pending_reviews || 0} records waiting for review</p></div></div>
+    <HotspotCard hotspots={hotspots} onSettings={onSettings} />
+    <section className="card range-bar" aria-label="Report period">
+      <div className="range-title"><CalendarDays size={18} /><div><strong>Report period</strong><span>{report ? `${shortDate(report.start)} – ${shortDate(report.end)} · ${report.dogs} dogs in ${report.detections} reports` : 'Loading…'}</span></div></div>
+      <div className="range-controls">
+        <div className="range-presets" role="group" aria-label="Quick periods">{presets.map(days => <button type="button" key={days} className={activePreset === days ? 'active' : ''} aria-pressed={activePreset === days} onClick={() => onRange({ start: manilaDate(days - 1), end: today })}>Last {days} days</button>)}</div>
+        <label className="date-field"><span>From</span><input type="date" value={range.start} max={range.end} onChange={event => event.target.value && onRange({ ...range, start: event.target.value })} /></label>
+        <label className="date-field"><span>To</span><input type="date" value={range.end} min={range.start} max={today} onChange={event => event.target.value && onRange({ ...range, end: event.target.value })} /></label>
+      </div>
+    </section>
+    <div className="dashboard-grid analytics-grid">
+      <section className="card activity-card"><div className="card-header"><div><span className="section-kicker">DAILY TREND</span><h3>Dog counts by day</h3><p>Recorded count from all monitoring zones</p></div><span className="period-chip">{report ? `${report.daily.length} days` : '–'}</span></div><div className="chart-wrap analytics-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={report?.daily || []} margin={{ top: 12, right: 8, left: -30, bottom: 0 }}><CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="date" tickFormatter={value => (report?.daily.length || 0) <= 7 ? weekday(value) : shortDate(value)} minTickGap={18} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} dy={12} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} /><Tooltip contentStyle={tooltipStyle} labelFormatter={value => shortDate(String(value))} /><Area type="monotone" dataKey="dogs" name="Dogs" stroke="#10b981" strokeWidth={3} fill="#10b981" fillOpacity={.18} /></AreaChart></ResponsiveContainer></div></section>
+      <section className="card location-rank"><div className="card-header"><div><span className="section-kicker">LOCATION BREAKDOWN</span><h3>Activity by zone</h3><p>Dogs recorded and each zone's busiest hour</p></div></div><div className="rank-list">{zones.map((item, index) => <div className="rank-row" key={item.location_id}><div><span className="rank-index">{String(index + 1).padStart(2, '0')}</span><strong>{item.name}</strong><span>{item.dogs} dogs</span></div><div className="rank-track"><span style={{ width: `${topZone ? (item.dogs / topZone) * 100 : 0}%` }} /></div><p className="rank-peak"><Clock3 size={13} /> {item.peak_hour === null ? 'No activity in this period' : `Most active ${hourRange(item.peak_hour)}`}{item.night_dogs > 0 ? ` · ${item.night_dogs} at night` : ''}</p></div>)}</div></section>
+    </div>
+    <section className="card hourly-card"><div className="card-header"><div><span className="section-kicker">TIME OF DAY</span><h3>Activity by hour</h3><p>Dogs recorded in each hour across the report period (Philippine time)</p></div><span className="period-chip"><Clock3 size={14} /> Peak {hourRange(peak)}</span></div><div className="chart-wrap analytics-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={hourly} margin={{ top: 12, right: 8, left: -30, bottom: 0 }}><CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="hour" tickFormatter={hourLabel} interval={2} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} dy={12} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} /><Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--green-soft)' }} labelFormatter={value => hourRange(Number(value))} /><Bar dataKey="dogs" name="Dogs" radius={[6, 6, 0, 0]}>{hourly.map(item => <Cell key={item.hour} fill={item.hour === peak ? '#d97706' : '#10b981'} fillOpacity={item.hour === peak ? 1 : .55} />)}</Bar></BarChart></ResponsiveContainer></div></section>
   </>
 }
 
@@ -284,6 +350,12 @@ export default function App() {
   const [devices, setDevices] = useState<Device[]>([])
   const [locations, setLocations] = useState<Location[]>([])
   const [analytics, setAnalytics] = useState<Analytics | null>(null)
+  const [report, setReport] = useState<ActivityReport | null>(null)
+  const [hotspots, setHotspots] = useState<Hotspots | null>(null)
+  const [reportRange, setReportRange] = useState<ReportRange>(() => ({ start: manilaDate(6), end: manilaDate() }))
+  const [hotspotSettings, setHotspotSettings] = useState<HotspotSettings>(storedHotspotSettings)
+  const reportRangeRef = useRef(reportRange)
+  const hotspotSettingsRef = useRef(hotspotSettings)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
@@ -311,6 +383,7 @@ export default function App() {
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('bantayaso-theme', theme) }, [theme])
   useEffect(() => { localStorage.setItem('bantayaso-sidebar-expanded', String(sidebarExpanded)) }, [sidebarExpanded])
+  useEffect(() => { try { localStorage.setItem('bantayaso-hotspot-settings', JSON.stringify(hotspotSettings)) } catch { /* settings stay for this visit */ } }, [hotspotSettings])
   useEffect(() => { if (toast) { const timer = window.setTimeout(() => setToast(''), 4000); return () => clearTimeout(timer) } }, [toast])
   useEffect(() => { localStorage.setItem('bantayaso-read-notifications', JSON.stringify([...readNotificationIds])) }, [readNotificationIds])
   useEffect(() => { localStorage.setItem('bantayaso-dismissed-notifications', JSON.stringify([...dismissedNotificationIds])) }, [dismissedNotificationIds])
@@ -328,14 +401,40 @@ export default function App() {
   const refresh = useCallback(async (first = false) => {
     if (first) setLoading(true)
     try {
-      const [s, ds, dv, loc, an] = await Promise.all([api.summary(), api.detections(), api.devices(), api.locations(), api.analytics()])
+      const range = reportRangeRef.current, limits = hotspotSettingsRef.current
+      const [s, ds, dv, loc, an, rp, hs] = await Promise.all([api.summary(), api.detections(), api.devices(), api.locations(), api.analytics(), api.report(range.start, range.end), api.hotspots(limits.windowHours, limits.threshold)])
       setSummary(s); setDetections(ds); setDevices(dv); setLocations(loc); setAnalytics(an); setError('')
+      if (range === reportRangeRef.current) setReport(rp)
+      if (limits === hotspotSettingsRef.current) setHotspots(hs)
       setSelected(current => current ? ds.find(item => item.id === current.id) || null : null)
     } catch (issue) { setError(issue instanceof Error ? issue.message : 'Could not connect to the local service') }
     finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { void refresh(true); const timer = window.setInterval(() => { void refresh() }, 15000); return () => clearInterval(timer) }, [refresh])
+  // A new report period or hotspot limit is fetched at once instead of waiting for the next refresh.
+  useEffect(() => {
+    reportRangeRef.current = reportRange
+    api.report(reportRange.start, reportRange.end).then(result => { if (reportRangeRef.current === reportRange) setReport(result) }).catch(() => { /* the full refresh reports errors */ })
+  }, [reportRange])
+  useEffect(() => {
+    hotspotSettingsRef.current = hotspotSettings
+    api.hotspots(hotspotSettings.windowHours, hotspotSettings.threshold).then(result => { if (hotspotSettingsRef.current === hotspotSettings) setHotspots(result) }).catch(() => { /* the full refresh reports errors */ })
+  }, [hotspotSettings])
+
+  // Check a small change counter every 5 s and reload only when the API data changed;
+  // a full reload still runs every 15 s for time-based values such as today's totals.
+  const revisionRef = useRef('')
+  useEffect(() => {
+    void refresh(true)
+    const full = window.setInterval(() => { void refresh() }, 15000)
+    const quick = window.setInterval(() => {
+      api.revision().then(({ revision }) => {
+        if (revisionRef.current && revision !== revisionRef.current) void refresh()
+        revisionRef.current = revision
+      }).catch(() => { /* the full reload reports connection errors */ })
+    }, 5000)
+    return () => { clearInterval(full); clearInterval(quick) }
+  }, [refresh])
 
   const filtered = useMemo(() => detections.filter(row => {
     const text = `${row.id} ${row.device_id} ${row.device.name} ${row.location.name} ${row.location.barangay}`.toLowerCase()
@@ -347,7 +446,10 @@ export default function App() {
   const selectedCameraRows = selectedCamera ? detections.filter(row => row.device_id === selectedCamera.id) : []
 
   const notifications = detections.filter(row => row.review_status === 'pending' && !dismissedNotificationIds.has(row.id))
-  const unreadCount = notifications.filter(row => !readNotificationIds.has(row.id)).length
+  const hotspotAlerts = (hotspots?.zones || []).filter(zone => zone.is_hotspot && !dismissedNotificationIds.has(hotspotAlertId(zone)))
+  const hotspotLocationIds = new Set((hotspots?.zones || []).filter(zone => zone.is_hotspot).map(zone => zone.location_id))
+  const allNoticeIds = [...hotspotAlerts.map(hotspotAlertId), ...notifications.map(row => row.id)]
+  const unreadCount = allNoticeIds.filter(id => !readNotificationIds.has(id)).length
   const nowLabel = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(new Date())
 
   async function simulate() {
@@ -454,6 +556,25 @@ export default function App() {
     setDismissedNotificationIds(current => new Set([...current, ...ids]))
   }
 
+  function openHotspot(zone: HotspotZone) {
+    markNotificationsRead([hotspotAlertId(zone)])
+    selectPage('analytics')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function exportReport() {
+    if (!report) return
+    const cell = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`
+    const lines: (string | number)[][] = [
+      ['BantayAso activity report', `${report.start} to ${report.end}`], ['Dogs recorded', report.dogs], ['Reports', report.detections], ['Peak hour', hourRange(report.peak_hour)], [],
+      ['Zone', 'Barangay', 'Dogs', 'Reports', 'Dogs at night (6 PM - 6 AM)', 'Most active hour', `Hotspot now (${hotspots?.threshold ?? ''}+ dogs in ${hotspots ? windowLabel(hotspots.window_hours) : ''})`],
+      ...report.by_location.map(zone => [zone.name, zone.barangay, zone.dogs, zone.detections, zone.night_dogs, hourRange(zone.peak_hour), hotspotLocationIds.has(zone.location_id) ? 'Yes' : 'No']), [],
+      ['Hour', 'Dogs', 'Reports'], ...report.hourly.map(item => [hourRange(item.hour), item.dogs, item.detections]),
+    ]
+    const url = URL.createObjectURL(new Blob([lines.map(line => line.map(cell).join(',')).join('\n')], { type: 'text/csv' }))
+    const link = document.createElement('a'); link.href = url; link.download = `bantayaso-report-${report.start}-to-${report.end}.csv`; link.click(); URL.revokeObjectURL(url)
+  }
+
   function openDetection(row: Detection) {
     markNotificationsRead([row.id])
     setNotificationOpen(false)
@@ -501,19 +622,26 @@ export default function App() {
           <Bell size={19} />{unreadCount > 0 && <span className="notification-count">{unreadCount > 99 ? '99+' : unreadCount}</span>}
         </button>
         {notificationOpen && <section id="notification-panel" className="notification-panel" aria-labelledby="notification-title">
-          <div className="notification-header"><div><h2 id="notification-title">Notifications</h2><p>{unreadCount} unread | {notifications.length} notices</p></div><button type="button" onClick={() => markNotificationsRead(notifications.map(row => row.id))} disabled={unreadCount === 0}>Mark all read</button></div>
-          <div className="notification-list">{notifications.length === 0
-            ? <div className="notification-empty"><Bell size={23} /><strong>You're all caught up</strong><span>New detections will appear here.</span></div>
-            : notifications.slice(0, 6).map(row => <div key={row.id} className={`notification-item ${!readNotificationIds.has(row.id) ? 'unread' : ''}`}>
+          <div className="notification-header"><div><h2 id="notification-title">Notifications</h2><p>{unreadCount} unread | {allNoticeIds.length} notices</p></div><button type="button" onClick={() => markNotificationsRead(allNoticeIds)} disabled={unreadCount === 0}>Mark all read</button></div>
+          <div className="notification-list">{allNoticeIds.length === 0
+            ? <div className="notification-empty"><Bell size={23} /><strong>You're all caught up</strong><span>New detections and hotspot alerts will appear here.</span></div>
+            : <>{hotspotAlerts.map(zone => { const id = hotspotAlertId(zone); const unread = !readNotificationIds.has(id); return <div key={id} className={`notification-item hotspot-notice ${unread ? 'unread' : ''}`}>
+              <button type="button" className="notification-open" onClick={() => openHotspot(zone)} aria-label={`Open hotspot alert for ${zone.name}`}>
+                <span className="notification-thumb hotspot-thumb"><Flame size={20} /></span>
+                <span className="notification-copy"><strong>Hotspot: {zone.name}</strong><small>{zone.dogs} dogs in the last {hotspots ? windowLabel(hotspots.window_hours) : ''} | limit {hotspots?.threshold}</small>{zone.crossed_at && <time dateTime={zone.crossed_at}>Reached {dateTime(zone.crossed_at)}</time>}</span>
+                {unread && <span className="notification-new">New</span>}
+              </button>
+              <button type="button" className="notification-dismiss" title="Dismiss notification" aria-label={`Dismiss hotspot alert for ${zone.name}`} onClick={() => dismissNotifications([id])}><X size={16} /></button>
+            </div> })}{notifications.slice(0, 6).map(row => <div key={row.id} className={`notification-item ${!readNotificationIds.has(row.id) ? 'unread' : ''}`}>
               <button type="button" className="notification-open" onClick={() => openNotification(row)} aria-label={`Open ${detectionHeading(row)} at ${row.location.name}`}>
                 <span className="notification-thumb">{row.snapshot_path ? <img src={api.snapshot(row.snapshot_path)} alt="" /> : <Camera size={20} />}</span>
                 <span className="notification-copy"><strong>{detectionHeading(row)}</strong><small>{row.device.name} | {row.location.name}</small><time dateTime={row.timestamp}>{dateTime(row.timestamp)}</time></span>
                 {!readNotificationIds.has(row.id) && <span className="notification-new">New</span>}
               </button>
               <button type="button" className="notification-dismiss" title="Dismiss notification" aria-label={`Dismiss notification for ${detectionHeading(row)} at ${row.location.name}`} onClick={() => dismissNotifications([row.id])}><X size={16} /></button>
-            </div>)}
+            </div>)}</>}
           </div>
-          <div className="notification-footer"><span>{notifications.length > 6 ? `Showing latest 6 of ${notifications.length}` : `${notifications.length} shown`}</span><div><button type="button" onClick={() => dismissNotifications(notifications.map(row => row.id))} disabled={notifications.length === 0}>Clear all</button><button type="button" onClick={() => { selectPage('detections'); setStatusFilter('pending') }}>View all</button></div></div>
+          <div className="notification-footer"><span>{notifications.length > 6 ? `Showing latest 6 of ${notifications.length}` : `${notifications.length} shown`}</span><div><button type="button" onClick={() => dismissNotifications(allNoticeIds)} disabled={allNoticeIds.length === 0}>Clear all</button><button type="button" onClick={() => { selectPage('detections'); setStatusFilter('pending') }}>View all</button></div></div>
           <p className="notification-note">Clearing hides notices in this browser; detection records remain available for review.</p>
         </section>}
       </div></div></header>
@@ -530,14 +658,14 @@ export default function App() {
             <section className="card recent-card"><div className="card-header"><div><span className="section-kicker">RECENT EVENTS</span><h3>Latest detections</h3><p>Snapshots and counts from every monitoring zone</p></div><button className="text-button" onClick={() => selectPage('detections')}>View all detections <ArrowRight size={16} /></button></div><DetectionList rows={detections.slice(0, 4)} onOpen={openDetection} onDelete={setDeleteTarget} compact /></section>
           </>}
 
-          {page === 'detections' && <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> DETECTION RECORDS</div><h1>{filteredDevice ? `Detections from ${filteredDevice.name}` : "Detection history"}</h1><p>{filteredDevice ? `Showing records from ${filteredDevice.id} at ${filteredDevice.location.name}.` : "Review camera activity from every monitoring zone."}</p></div><div className="heading-actions">{deviceFilter !== "all" && <button className="outline-button" onClick={() => { setDeviceFilter("all"); setLocationFilter("all") }}><ArrowRight size={16} /> All detections</button>}{deviceFilter === "all" && <button className="danger-button" title="Delete all detections" onClick={() => setDeleteTarget('all')} disabled={working || detections.length === 0}><Trash2 size={17} /> Delete all</button>}<button className="outline-button" onClick={exportCsv}><ArrowDownToLine size={17} /> Export CSV</button></div></div><div className="records-summary"><div><span>Shown detections</span><strong>{filtered.length}</strong></div><div><span>Awaiting review</span><strong>{filtered.filter(row => row.review_status === "pending").length}</strong></div><div><span>Dog counts across events</span><strong>{filtered.reduce((sum, row) => sum + row.dog_count, 0)}</strong></div></div><section className="card records-card"><div className="filter-bar"><label className="search-field"><Search size={18} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search detection, camera or location" /></label><CustomDropdown icon={SlidersHorizontal} ariaLabel="Filter by status" value={statusFilter} options={[{ value: 'all', label: 'All statuses' }, { value: 'pending', label: 'Pending' }, { value: 'reviewed', label: 'Reviewed' }, { value: 'flagged', label: 'Flagged' }]} onChange={val => setStatusFilter(val)} /><CustomDropdown icon={MapPin} ariaLabel="Filter by location" value={filteredDevice ? filteredDevice.location.id : locationFilter} disabled={!!filteredDevice} options={[{ value: 'all', label: 'All locations' }, ...locations.map(loc => ({ value: loc.id, label: loc.name }))]} onChange={val => setLocationFilter(val === 'all' ? 'all' : Number(val))} /></div><div className="table-labels"><span className="table-label-thumb" /><span>CAPTURE / EVENT</span><span>TIME RECORDED</span><span>REVIEW STATUS</span><span className="table-label-action" /></div><DetectionList rows={filtered} onOpen={openDetection} onDelete={setDeleteTarget} emptyMessage={filteredDevice ? `No detections have been recorded for ${filteredDevice.name} yet.` : undefined} /><div className="records-footer">Showing {filtered.length} of {detections.length} detections <span>Updates automatically every 15 seconds</span></div></section></>}
+          {page === 'detections' && <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> DETECTION RECORDS</div><h1>{filteredDevice ? `Detections from ${filteredDevice.name}` : "Detection history"}</h1><p>{filteredDevice ? `Showing records from ${filteredDevice.id} at ${filteredDevice.location.name}.` : "Review camera activity from every monitoring zone."}</p></div><div className="heading-actions">{deviceFilter !== "all" && <button className="outline-button" onClick={() => { setDeviceFilter("all"); setLocationFilter("all") }}><ArrowRight size={16} /> All detections</button>}{deviceFilter === "all" && <button className="danger-button" title="Delete all detections" onClick={() => setDeleteTarget('all')} disabled={working || detections.length === 0}><Trash2 size={17} /> Delete all</button>}<button className="outline-button" onClick={exportCsv}><ArrowDownToLine size={17} /> Export CSV</button></div></div><div className="records-summary"><div><span>Shown detections</span><strong>{filtered.length}</strong></div><div><span>Awaiting review</span><strong>{filtered.filter(row => row.review_status === "pending").length}</strong></div><div><span>Dog counts across events</span><strong>{filtered.reduce((sum, row) => sum + row.dog_count, 0)}</strong></div></div><section className="card records-card"><div className="filter-bar"><label className="search-field"><Search size={18} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search detection, camera or location" /></label><CustomDropdown icon={SlidersHorizontal} ariaLabel="Filter by status" value={statusFilter} options={[{ value: 'all', label: 'All statuses' }, { value: 'pending', label: 'Pending' }, { value: 'reviewed', label: 'Reviewed' }, { value: 'flagged', label: 'Flagged' }]} onChange={val => setStatusFilter(val)} /><CustomDropdown icon={MapPin} ariaLabel="Filter by location" value={filteredDevice ? filteredDevice.location.id : locationFilter} disabled={!!filteredDevice} options={[{ value: 'all', label: 'All locations' }, ...locations.map(loc => ({ value: loc.id, label: loc.name }))]} onChange={val => setLocationFilter(val === 'all' ? 'all' : Number(val))} /></div><div className="table-labels"><span className="table-label-thumb" /><span>CAPTURE / EVENT</span><span>TIME RECORDED</span><span>REVIEW STATUS</span><span className="table-label-action" /></div><DetectionList rows={filtered} onOpen={openDetection} onDelete={setDeleteTarget} emptyMessage={filteredDevice ? `No detections have been recorded for ${filteredDevice.name} yet.` : undefined} /><div className="records-footer">Showing {filtered.length} of {detections.length} detections <span>New reports appear within a few seconds</span></div></section></>}
 
-          {page === 'cameras' && (selectedCamera ? <CameraDetail device={selectedCamera} rows={selectedCameraRows} onBack={() => setSelectedCameraId(null)} onViewHistory={() => openCameraDetections(selectedCamera)} onOpen={openDetection} onDelete={setDeleteTarget} /> : <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> DEVICE NETWORK</div><h1>CCTV cameras</h1><p>Select a camera to view its detections and snapshots.</p></div><button className="primary-button" onClick={() => setAddOpen(true)}><Plus size={17} /> Add camera</button></div><div className="camera-summary"><div><strong>{summary?.active_cameras || 0} online</strong><span>camera connections</span></div><div><strong>{(summary?.total_cameras || 0) - (summary?.active_cameras || 0)} offline</strong><span>not connected</span></div><div><strong>{locations.length} zones</strong><span>under observation</span></div></div><div className="camera-grid">{devices.map(device => { const latest = detections.find(row => row.device_id === device.id && row.snapshot_path); return <article className="camera-card card" key={device.id} role="button" tabIndex={0} aria-label={`Open camera ${device.name}`} onClick={() => openCameraDetails(device)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openCameraDetails(device) } }}><div className="camera-preview">{latest?.snapshot_path ? <img src={api.snapshot(latest.snapshot_path)} alt={`Latest snapshot at ${device.location.name}`} /> : <div className="camera-no-preview"><Camera size={32} /><span>No captures yet</span></div>}<span className="camera-preview-label"><Radio size={13} /> {latest ? 'LATEST SNAPSHOT' : 'AWAITING CAPTURE'}</span></div><div className="camera-info"><div><span className="camera-id">{device.id}</span><StatusPill status={device.status} /></div><h3>{device.name}</h3><p><MapPin size={15} /> {device.location.name}, {device.location.barangay}</p><div className="camera-meta"><span><Clock3 size={14} /> {device.last_seen ? `Last signal ${dateTime(device.last_seen)}` : 'No signal yet'}</span><span><Eye size={14} /> {detections.filter(row => row.device_id === device.id).length} events</span><span className="camera-open-hint">Open camera <ArrowRight size={14} /></span></div></div></article> })}</div></>)}
+          {page === 'cameras' && (selectedCamera ? <CameraDetail device={selectedCamera} rows={selectedCameraRows} onBack={() => setSelectedCameraId(null)} onViewHistory={() => openCameraDetections(selectedCamera)} onOpen={openDetection} onDelete={setDeleteTarget} /> : <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> DEVICE NETWORK</div><h1>CCTV cameras</h1><p>Select a camera to view its detections and snapshots.</p></div><button className="primary-button" onClick={() => setAddOpen(true)}><Plus size={17} /> Add camera</button></div><div className="camera-summary"><div><strong>{summary?.active_cameras || 0} online</strong><span>camera connections</span></div><div><strong>{(summary?.total_cameras || 0) - (summary?.active_cameras || 0)} offline</strong><span>not connected</span></div><div><strong>{locations.length} zones</strong><span>under observation</span></div></div><div className="camera-grid">{devices.map(device => { const latest = detections.find(row => row.device_id === device.id && row.snapshot_path); return <article className="camera-card card" key={device.id} role="button" tabIndex={0} aria-label={`Open camera ${device.name}`} onClick={() => openCameraDetails(device)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openCameraDetails(device) } }}><div className="camera-preview">{latest?.snapshot_path ? <img src={api.snapshot(latest.snapshot_path)} alt={`Latest snapshot at ${device.location.name}`} /> : <div className="camera-no-preview"><Camera size={32} /><span>No captures yet</span></div>}<span className="camera-preview-label"><Radio size={13} /> {latest ? 'LATEST SNAPSHOT' : 'AWAITING CAPTURE'}</span></div><div className="camera-info"><div><span className="camera-id">{device.id}</span><span className="camera-pills">{hotspotLocationIds.has(device.location.id) && <span className="hotspot-badge" title="This zone is over the hotspot limit"><Flame size={12} /> Hotspot</span>}<StatusPill status={device.status} /></span></div><h3>{device.name}</h3><p><MapPin size={15} /> {device.location.name}, {device.location.barangay}</p><div className="camera-meta"><span><Clock3 size={14} /> {device.last_seen ? `Last signal ${dateTime(device.last_seen)}` : 'No signal yet'}</span><span><Eye size={14} /> {detections.filter(row => row.device_id === device.id).length} events</span><span className="camera-open-hint">Open camera <ArrowRight size={14} /></span></div></div></article> })}</div></>)}
 
           {page === 'analytics' && detections.length === 0 && <EmptyAnalytics />}
-          {page === 'analytics' && detections.length > 0 && <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> MONITORING INSIGHTS</div><h1>Activity analytics</h1><p>See how dog activity changes across places and time.</p></div><button className="outline-button" onClick={exportCsv}><ArrowDownToLine size={17} /> Export records</button></div><div className="analytics-top"><div className="analytics-highlight card stat-card-green"><div className="analytics-hl-top"><span className="section-kicker">DOG COUNTS ACROSS EVENTS</span></div><strong>{detections.reduce((sum, row) => sum + row.dog_count, 0)}</strong><p>Across {summary?.total_detections || 0} recorded events</p></div><div className="analytics-highlight card stat-card-blue"><div className="analytics-hl-top"><span className="section-kicker">AVERAGE CONFIDENCE</span></div><strong>{detections.length ? Math.round(detections.reduce((sum, row) => sum + row.confidence, 0) / detections.length * 100) : 0}%</strong><p>Reported confidence across recorded events</p></div><div className="analytics-highlight card stat-card-amber"><div className="analytics-hl-top"><span className="section-kicker">REVIEWED EVENTS</span></div><strong>{detections.filter(row => row.review_status === 'reviewed').length}</strong><p>{summary?.pending_reviews || 0} records waiting for review</p></div></div><div className="dashboard-grid analytics-grid"><section className="card activity-card"><div className="card-header"><div><span className="section-kicker">WEEKLY TREND</span><h3>Dog counts by day</h3><p>Recorded count from all monitoring zones</p></div><span className="period-chip">Last 7 days</span></div><div className="chart-wrap analytics-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={analytics?.daily || []} margin={{ top: 12, right: 8, left: -30, bottom: 0 }}><CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="date" tickFormatter={weekday} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} dy={12} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} /><Tooltip contentStyle={{ border: '1px solid var(--border)', borderRadius: 12, background: 'var(--card)', color: 'var(--text)' }} /><Area type="monotone" dataKey="dogs" stroke="#10b981" strokeWidth={3} fill="#10b981" fillOpacity={.18} /></AreaChart></ResponsiveContainer></div></section><section className="card location-rank"><div className="card-header"><div><span className="section-kicker">LOCATION BREAKDOWN</span><h3>Activity by zone</h3><p>Total dogs recorded per location</p></div></div><div className="rank-list">{[...(analytics?.by_location || [])].sort((a, b) => b.count - a.count).map((item, index, all) => <div className="rank-row" key={item.location_id}><div><span className="rank-index">{String(index + 1).padStart(2, '0')}</span><strong>{item.name}</strong><span>{item.count} dogs</span></div><div className="rank-track"><span style={{ width: `${all[0].count ? (item.count / all[0].count) * 100 : 0}%` }} /></div></div>)}</div></section></div></>}
+          {page === 'analytics' && detections.length > 0 && <AnalyticsPage detections={detections} summary={summary} report={report} hotspots={hotspots} range={reportRange} onRange={setReportRange} onExportRecords={exportCsv} onExportReport={exportReport} onSettings={() => selectPage('settings')} />}
 
-          {page === 'settings' && <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> SYSTEM PREFERENCES</div><h1>Settings</h1><p>Control how the monitoring workspace looks and updates.</p></div></div><div className="settings-layout"><section className="card settings-card"><div className="settings-row"><div className="settings-icon"><Sun size={20} /></div><div><strong>Appearance</strong><p>Choose the display mode that works for you.</p></div><button className="outline-button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}{theme === 'light' ? 'Dark mode' : 'Light mode'}</button></div><div className="settings-row"><div className="settings-icon"><RefreshCw size={20} /></div><div><strong>Live updates</strong><p>Dashboard data refreshes every 15 seconds.</p></div><span className="setting-value"><span className="tiny-dot" /> Active</span></div><div className="settings-row"><div className="settings-icon"><ShieldCheck size={20} /></div><div><strong>Scenario mode</strong><p>Generated snapshots let you practice the review flow without a live camera.</p></div><span className="setting-value">Available</span></div></section><section className="card setup-card"><div className="setup-heading"><span className="settings-icon"><Camera size={22} /></span><div><span className="section-kicker">RECORD FLOW</span><h3>What a scenario creates</h3></div></div><p>Choose a camera and dog count through Simulate a scenario. The resulting still snapshot appears in Detection history with its location, time, and review status.</p><div className="flow-note"><Camera size={18} /><span>Camera → snapshot → detection record → operator review</span></div></section></div></>}
+          {page === 'settings' && <><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> SYSTEM PREFERENCES</div><h1>Settings</h1><p>Control how the monitoring workspace looks and updates.</p></div></div><div className="settings-layout"><section className="card settings-card"><div className="settings-row"><div className="settings-icon"><Sun size={20} /></div><div><strong>Appearance</strong><p>Choose the display mode that works for you.</p></div><button className="outline-button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}{theme === 'light' ? 'Dark mode' : 'Light mode'}</button></div><div className="settings-row"><div className="settings-icon"><RefreshCw size={20} /></div><div><strong>Live updates</strong><p>New reports appear within a few seconds; all data refreshes every 15 seconds.</p></div><span className="setting-value"><span className="tiny-dot" /> Active</span></div><div className="settings-row"><div className="settings-icon"><Flame size={20} /></div><div><strong>Hotspot alerts</strong><p>Flag a zone, and send one notice per zone per day, when its dogs reach this limit.</p></div><div className="hotspot-settings"><label><span>Dogs</span><input type="number" min={1} max={1000} value={hotspotSettings.threshold} onChange={event => { const value = Math.round(Number(event.target.value)); if (value >= 1 && value <= 1000) setHotspotSettings(current => ({ ...current, threshold: value })) }} /></label><label><span>Within</span><select value={hotspotSettings.windowHours} onChange={event => setHotspotSettings(current => ({ ...current, windowHours: Number(event.target.value) }))}>{WINDOW_OPTIONS.map(hours => <option key={hours} value={hours}>{windowLabel(hours)}</option>)}</select></label></div></div><div className="settings-row"><div className="settings-icon"><ShieldCheck size={20} /></div><div><strong>Scenario mode</strong><p>Generated snapshots let you practice the review flow without a live camera.</p></div><span className="setting-value">Available</span></div></section><section className="card setup-card"><div className="setup-heading"><span className="settings-icon"><Camera size={22} /></span><div><span className="section-kicker">RECORD FLOW</span><h3>What a scenario creates</h3></div></div><p>Choose a camera and dog count through Simulate a scenario. The resulting still snapshot appears in Detection history with its location, time, and review status.</p><div className="flow-note"><Camera size={18} /><span>Camera → snapshot → detection record → operator review</span></div></section></div></>}
         </>}
       </div>
       <footer className="workspace-footer">
